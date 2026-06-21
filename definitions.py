@@ -24,18 +24,49 @@ def load_config():
 
 config = load_config()
 
-def read_cmd_from_file(filepath):
+def read_start_config(filepath):
+    """读取启动配置文件，返回 (jar_name, java_args) 元组。
+    文件格式：
+        第一行: JAR 文件名 (必需)
+        第二行: Java 额外参数 (可选，如 -Xmx1024M nogui)
+
+    兼容旧版格式：['java', '-jar', 'server.jar', 'nogui'] 会自动迁移。
+    """
     try:
         with open(filepath, 'r', encoding='utf-8') as file:
-            content = file.read().strip()
-            # 将字符串 "['java', ...]" 转换为真正的 List 对象
-            cmd_list = ast.literal_eval(content)
-            return cmd_list
+            lines = file.readlines()
+        content = ''.join(lines).strip()
+
+        # 检测旧版格式 (Python 列表字面量)，自动迁移
+        if content.startswith('[') and content.endswith(']'):
+            try:
+                old_list = ast.literal_eval(content)
+            except (ValueError, SyntaxError):
+                return None
+            if len(old_list) >= 3 and old_list[0] == 'java' and old_list[1] == '-jar':
+                jar_name = old_list[2]
+                java_args = ' '.join(old_list[3:])
+                # 自动迁移到新格式
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    f.write(f"{jar_name}\n{java_args}\n" if java_args else f"{jar_name}\n")
+                print(f"✅ 已自动迁移 {filepath} 到新格式")
+                return (jar_name, java_args)
+            else:
+                print(f"⚠️ 旧版格式无法识别，请手动更新 {filepath}")
+                return None
+
+        # 新格式
+        jar_name = lines[0].strip() if lines else ''
+        java_args = lines[1].strip() if len(lines) > 1 else ''
+        if not jar_name:
+            print(f"错误：启动配置文件 {filepath} 中 JAR 文件名为空")
+            return None
+        return (jar_name, java_args)
     except FileNotFoundError:
         print(f"错误：找不到文件 {filepath}")
         return None
-    except SyntaxError:
-        print("错误：文件内容格式不正确，不是有效的列表格式")
+    except Exception as e:
+        print(f"错误：读取启动配置文件失败 - {e}")
         return None
 
 ANNOUNCE_FILE = 'announcements.json'
@@ -103,11 +134,26 @@ def start_server(server_id):
             f.write(file)
         return f"启动脚本缺失，已生成默认 start.txt，请编辑后重新尝试启动服务器 {server_id}。"
 
+    # 读取启动配置（JAR 名 + Java 参数）
+    start_config = read_start_config(f"servers/{server_id}/start.txt")
+    if start_config is None:
+        return "启动配置文件读取失败，请检查 start.txt 格式"
+    jar_name, java_args = start_config
+
+    # 构建安全的启动命令：始终使用 java 作为可执行文件
+    jar_path = os.path.join(os.getcwd(), "servers", str(server_id), jar_name)
+    if not os.path.isfile(jar_path):
+        return f"找不到 JAR 文件: {jar_name}，请将服务端 JAR 上传到 servers/{server_id}/ 目录"
+
+    cmd = ['java', '-jar', jar_name]
+    if java_args:
+        cmd.extend(java_args.split())
+
     try:
         # 启动进程，捕获 stdout 和 stdin
         # text=True 表示以文本模式运行，方便处理字符串
         mc_process[server_id] = subprocess.Popen(
-            read_cmd_from_file(f"servers/{server_id}/start.txt"),
+            cmd,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, # 将错误输出也合并到标准输出

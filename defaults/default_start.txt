@@ -1,1 +1,2 @@
-['java', '-jar', 'server.jar', 'nogui']
+server.jar
+nogui

@@ -5,7 +5,7 @@ import queue
 import os
 
 # import definitions
-from definitions import load_config, load_announcements, start_server, stop_server, restart_server, read_cmd_from_file, output_queues, mc_process
+from definitions import load_config, load_announcements, start_server, stop_server, restart_server, output_queues, mc_process
 from definitions import sqlite_ready, mysql_ready, login, add_user
 from definitions import check_admin, list_users, set_admin_status, reset_password, delete_user
 from definitions import get_server_limit, set_server_limit
