@@ -147,6 +147,49 @@ footer {
 .flashes .success { background: #f0fdf4; color: #16a34a; border: 1px solid #bbf7d0; }
 .flashes .info { background: #eff6ff; color: #2563eb; border: 1px solid #bfdbfe; }
 
+/* --- Toast 弹窗通知 --- */
+.toast {
+    position: fixed;
+    top: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 14px 28px;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    z-index: 9999;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+    cursor: pointer;
+    animation: toastSlideIn 0.4s ease;
+    max-width: 90vw;
+    text-align: center;
+}
+.toast-error {
+    background: #fef2f2;
+    color: #dc2626;
+    border: 1px solid #fecaca;
+}
+.toast-success {
+    background: #f0fdf4;
+    color: #16a34a;
+    border: 1px solid #bbf7d0;
+}
+.toast-info {
+    background: #eff6ff;
+    color: #2563eb;
+    border: 1px solid #bfdbfe;
+}
+@keyframes toastSlideIn {
+    from {
+        opacity: 0;
+        transform: translateX(-50%) translateY(-16px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+    }
+}
+
 /* --- 后台页面 --- */
 .dashboard {
     min-height: calc(100vh - 120px);

@@ -114,6 +114,8 @@ def login_page():
             session['username'] = username
             flash('登录成功！', 'success')
             return redirect(url_for('backend'))
+        else:
+            flash('用户名或密码错误，请重试', 'error')
             
     return render_template('login.html')
 

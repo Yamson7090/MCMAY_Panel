@@ -17,11 +17,9 @@
 
             {% with messages = get_flashed_messages(with_categories=true) %}
                 {% if messages %}
-                    <ul class="flashes">
                     {% for category, message in messages %}
-                        <li class="{{ category }}">{{ message }}</li>
+                    <div class="toast toast-{{ category }}" id="toast-{{ loop.index }}">{{ message }}</div>
                     {% endfor %}
-                    </ul>
                 {% endif %}
             {% endwith %}
 
@@ -44,6 +42,27 @@
             </div>
         </div>
     </div>
+
+<script>
+    // 自动消失的 Toast 通知
+    document.addEventListener('DOMContentLoaded', function() {
+        var toasts = document.querySelectorAll('.toast');
+        toasts.forEach(function(toast) {
+            // 3 秒后自动淡出消失
+            setTimeout(function() {
+                toast.style.transition = 'opacity 0.5s ease';
+                toast.style.opacity = '0';
+                setTimeout(function() { toast.remove(); }, 500);
+            }, 3000);
+            // 点击立即关闭
+            toast.addEventListener('click', function() {
+                toast.style.transition = 'opacity 0.3s ease';
+                toast.style.opacity = '0';
+                setTimeout(function() { toast.remove(); }, 300);
+            });
+        });
+    });
+</script>
 
 </body>
 </html>
