@@ -80,8 +80,18 @@ def read_mc_output(server_id):
 def start_server(server_id):
     """启动 Minecraft 服务端"""
     global mc_process
+
+    # 检查在线服务器数量上限
+    max_online = config['server']['max_online_servers']
+    running_count = sum(1 for p in mc_process if p and p.poll() is None)
+    if running_count >= max_online:
+        return f"已达到最大在线服务器数 ({max_online})，请先停止其他服务器。"
+
+    if server_id >= len(mc_process):
+        return f"服务器 ID {server_id} 无效（最大 ID: {len(mc_process)-1}）"
+
     if server_id not in output_queues:
-        output_queues[server_id] = queue.Queue()
+        output_queues[server_id] = queue.Queue(maxsize=5000)
     if mc_process[server_id] and mc_process[server_id].poll() is None:
         return "服务端已经在运行中！"
     
@@ -114,116 +124,410 @@ def start_server(server_id):
     except Exception as e:
         return f"启动失败: {str(e)}"
 
-# 根据配置文件选择数据库类型并导入相关函数
-if config['database']['type'] == 'sqlite':
-    db_path = config['database']['sqlite']['db_path']
-    def sqlite_ready(db_name='users.db'):
-        conn = sqlite3.connect(db_name)
-        cursor = conn.cursor()
+
+def stop_server(server_id):
+    """停止 Minecraft 服务端"""
+    global mc_process
+    if server_id >= len(mc_process) or mc_process[server_id] is None:
+        return "服务端未运行"
+    if mc_process[server_id].poll() is not None:
+        mc_process[server_id] = None
+        return "服务端已经处于停止状态"
+    try:
+        # 先尝试优雅关闭
+        mc_process[server_id].stdin.write("stop\n")
+        mc_process[server_id].stdin.flush()
+        # 等待最多 10 秒
+        mc_process[server_id].wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        # 超时则强制杀死
+        mc_process[server_id].kill()
+        mc_process[server_id].wait()
+    except Exception:
+        pass
+    mc_process[server_id] = None
+    return f"服务端 #{server_id} 已停止"
+
+
+def restart_server(server_id):
+    """重启 Minecraft 服务端"""
+    msg = stop_server(server_id)
+    if "已停止" in msg or "未运行" in msg:
+        return start_server(server_id)
+    return msg
+
+# ---- 数据库层 ----
+# 统一接口，根据配置自动切换 SQLite / MySQL
+
+db_type = config['database']['type']
+db_path = config['database']['sqlite']['db_path'] if db_type == 'sqlite' else None
+
+def _hash_password(password):
+    return generate_password_hash(password)
+
+# ---------- SQLite ----------
+def sqlite_ready(db_name=None):
+    if db_name is None:
+        db_name = db_path
+    conn = sqlite3.connect(db_name)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            if_admin INTEGER DEFAULT 0,
+            server_limit INTEGER DEFAULT 0,
+            servers TEXT
+        )
+    ''')
+    # 兼容旧表：添加 server_limit 列（如果不存在）
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN server_limit INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass  # 列已存在
+    if not cursor.execute("SELECT * FROM users WHERE username='admin'").fetchone():
+        _add_user_sqlite(db_name, 'admin', '123456', if_admin=1)
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+def _add_user_sqlite(db_name, username, password, if_admin=0):
+    password_hash = _hash_password(password)
+    conn = sqlite3.connect(db_name)
+    cursor = conn.cursor()
+    try:
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT UNIQUE NOT NULL,
-                password_hash TEXT NOT NULL,
-                if_admin INTEGER DEFAULT 0,
-                servers TEXT
-            )
-        ''')
-        if not cursor.execute("SELECT * FROM users WHERE username='admin'").fetchone():
-            add_user('admin', '123456', if_admin=1, db_name=db_name)
+            INSERT INTO users (username, password_hash, if_admin) VALUES (?, ?, ?)
+        ''', (username, password_hash, if_admin))
         conn.commit()
+        print(f"✅ 用户 '{username}' 已添加到数据库")
+    except sqlite3.IntegrityError:
+        print(f"⚠️ 用户 '{username}' 已存在，无法重复添加")
+    finally:
         cursor.close()
         conn.close()
 
-    def add_user(username, password, if_admin=0, db_name=db_path):
-        password_hash = generate_password_hash(password)
-        conn = sqlite3.connect(db_name)
-        cursor = conn.cursor()
-        try:
-            cursor.execute('''
-                INSERT INTO users (username, password_hash, if_admin) VALUES (?, ?, ?)
-            ''', (username, password_hash, if_admin))
-            conn.commit()
-            print(f"✅ 用户 '{username}' 已添加到数据库")
-        except sqlite3.IntegrityError:
-            print(f"⚠️ 用户 '{username}' 已存在，无法重复添加")
-        finally:
+def _login_sqlite(db_name, username, password):
+    conn = sqlite3.connect(db_name)
+    cursor = conn.cursor()
+    cursor.execute('SELECT password_hash FROM users WHERE username=?', (username,))
+    result = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    return bool(result and check_password_hash(result[0], password))
+
+# ---------- MySQL ----------
+_db_user = config['database']['mysql']['user']
+_db_pass = config['database']['mysql']['password']
+_db_host = config['database']['mysql']['host']
+_db_port = config['database']['mysql']['port']
+_db_name_mysql = config['database']['mysql']['name']
+
+def mysql_ready():
+    conn = pymysql.connect(host=_db_host, port=_db_port, user=_db_user, password=_db_pass)
+    cursor = conn.cursor()
+    cursor.execute(f"CREATE DATABASE IF NOT EXISTS {_db_name_mysql} DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;")
+    conn.select_db(_db_name_mysql)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            username VARCHAR(255) UNIQUE NOT NULL,
+            password_hash VARCHAR(255) NOT NULL,
+            if_admin TINYINT(1) DEFAULT 0,
+            server_limit INT DEFAULT 0,
+            servers TEXT
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    ''')
+    # 兼容旧表
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN server_limit INT DEFAULT 0")
+    except Exception:
+        pass
+    cursor.execute("SELECT id FROM users WHERE username = %s", ('admin',))
+    if not cursor.fetchone():
+        _add_user_mysql('admin', '123456', if_admin=1)
+    cursor.close()
+    conn.close()
+
+def _add_user_mysql(username, password, if_admin=0):
+    password_hash = _hash_password(password)
+    conn = pymysql.connect(host=_db_host, port=_db_port, user=_db_user, password=_db_pass, database=_db_name_mysql)
+    cursor = conn.cursor()
+    try:
+        cursor.execute("INSERT INTO users (username, password_hash, if_admin) VALUES (%s, %s, %s)",
+                       (username, password_hash, if_admin))
+        conn.commit()
+        print(f"✅ 用户 '{username}' 已添加到数据库")
+    except pymysql.err.IntegrityError:
+        print(f"⚠️ 用户 '{username}' 已存在")
+    finally:
+        cursor.close()
+        conn.close()
+
+def _login_mysql(username, password):
+    conn = pymysql.connect(host=_db_host, port=_db_port, user=_db_user, password=_db_pass, database=_db_name_mysql)
+    cursor = conn.cursor()
+    cursor.execute("SELECT password_hash FROM users WHERE username = %s", (username,))
+    result = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    return bool(result and check_password_hash(result[0], password))
+
+# ---------- 统一暴露的接口 ----------
+
+def add_user(username, password, if_admin=0):
+    if db_type == 'sqlite':
+        _add_user_sqlite(db_path, username, password, if_admin)
+    elif db_type == 'mysql':
+        _add_user_mysql(username, password, if_admin)
+
+def login(username, password):
+    if db_type == 'sqlite':
+        return _login_sqlite(db_path, username, password)
+    elif db_type == 'mysql':
+        return _login_mysql(username, password)
+    return False
+
+
+# ========== 管理员数据库操作 ==========
+
+def check_admin(username):
+    """检查用户是否为管理员"""
+    try:
+        if db_type == 'sqlite':
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT if_admin FROM users WHERE username=?", (username,))
+            row = cursor.fetchone()
             cursor.close()
             conn.close()
-    
-
-    def login(username, password, db_name=db_path):
-        conn = sqlite3.connect(db_name)
-        cursor = conn.cursor()
-        cursor.execute('SELECT password_hash FROM users WHERE username=?', (username,))
-        result = cursor.fetchone()
-        cursor.close()
-        conn.close()
-        if result and check_password_hash(result[0], password):
-            return True
-        else:
-            return False
-
-elif config['database']['type'] == 'mysql':
-    """MySQL 数据库连接"""
-    config = load_config()
-    db_user = config['database']['mysql']['user']
-    db_pass = config['database']['mysql']['password']
-    db_host = config['database']['mysql']['host']
-    db_port = config['database']['mysql']['port']
-    db_name = config['database']['mysql']['name']
-
-    def add_user(username, password, if_admin=0):
-        password_hash = generate_password_hash(password)
-        conn = pymysql.connect(host=db_host, port=db_port, user=db_user, password=db_pass, database=db_name)
-        cursor = conn.cursor()
-        try:
-            sql_insert = "INSERT INTO users (username, password_hash, if_admin) VALUES (%s, %s, %s)"
-            cursor.execute(sql_insert, (username, password_hash, if_admin))
-            conn.commit()
-            print(f"✅ 用户 '{username}' 已添加到数据库")
-        except pymysql.err.IntegrityError:
-            print(f"⚠️ 用户 '{username}' 已存在")
-        finally:
+            return row is not None and row[0] == 1
+        elif db_type == 'mysql':
+            conn = pymysql.connect(host=_db_host, port=_db_port, user=_db_user, password=_db_pass, database=_db_name_mysql)
+            cursor = conn.cursor()
+            cursor.execute("SELECT if_admin FROM users WHERE username=%s", (username,))
+            row = cursor.fetchone()
             cursor.close()
             conn.close()
+            return row is not None and row[0] == 1
+    except Exception:
+        return False
 
-    def mysql_ready():
-        conn = pymysql.connect(host=db_host, port=db_port, user=db_user, password=db_pass)
-        cursor = conn.cursor()
-        cursor.execute(f"CREATE DATABASE IF NOT EXISTS {db_name} DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;")
-        conn.select_db(db_name)
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS users (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                username VARCHAR(255) UNIQUE NOT NULL,
-                password_hash VARCHAR(255) NOT NULL,
-                if_admin TINYINT(1) DEFAULT 0,
-                servers TEXT
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-        ''')
-        # 检查 admin 用户是否存在
-        sql_check = "SELECT id FROM users WHERE username = %s"
-        cursor.execute(sql_check, ('admin',))
-        result = cursor.fetchone()
-        cursor.close()
-        conn.close()
-        if not result:
-            add_user('admin', '123456', if_admin=1)
-    
-    def login(username, password):
-        conn = pymysql.connect(host=db_host, port=db_port, user=db_user, password=db_pass, database=db_name)
-        cursor = conn.cursor()
-        sql_select = "SELECT password_hash FROM users WHERE username = %s"
-        cursor.execute(sql_select, (username,))
-        result = cursor.fetchone()
-        cursor.close()
-        conn.close()
-        if result and check_password_hash(result[0], password):
+
+def list_users():
+    """列出所有用户"""
+    try:
+        if db_type == 'sqlite':
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, username, if_admin, server_limit, servers FROM users ORDER BY id")
+            rows = cursor.fetchall()
+            cursor.close()
+            conn.close()
+            return [{'id': r[0], 'username': r[1], 'if_admin': bool(r[2]), 'server_limit': r[3] if r[3] is not None else 0, 'servers': r[4]} for r in rows]
+        elif db_type == 'mysql':
+            conn = pymysql.connect(host=_db_host, port=_db_port, user=_db_user, password=_db_pass, database=_db_name_mysql)
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, username, if_admin, server_limit, servers FROM users ORDER BY id")
+            rows = cursor.fetchall()
+            cursor.close()
+            conn.close()
+            return [{'id': r[0], 'username': r[1], 'if_admin': bool(r[2]), 'server_limit': r[3] if r[3] is not None else 0, 'servers': r[4]} for r in rows]
+    except Exception:
+        return []
+
+
+def set_admin_status(username, is_admin):
+    """设置用户管理员状态"""
+    val = 1 if is_admin else 0
+    try:
+        if db_type == 'sqlite':
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("UPDATE users SET if_admin=? WHERE username=?", (val, username))
+            conn.commit()
+            cursor.close()
+            conn.close()
             return True
-        else:
-            return False
+        elif db_type == 'mysql':
+            conn = pymysql.connect(host=_db_host, port=_db_port, user=_db_user, password=_db_pass, database=_db_name_mysql)
+            cursor = conn.cursor()
+            cursor.execute("UPDATE users SET if_admin=%s WHERE username=%s", (val, username))
+            conn.commit()
+            cursor.close()
+            conn.close()
+            return True
+    except Exception:
+        return False
 
-else:
-    print("❌ 错误：不支持的数据库类型，请检查配置文件中的 database.type 设置。")
-    exit(1)
+
+def reset_password(username, new_password):
+    """重置用户密码"""
+    ph = _hash_password(new_password)
+    try:
+        if db_type == 'sqlite':
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("UPDATE users SET password_hash=? WHERE username=?", (ph, username))
+            conn.commit()
+            cursor.close()
+            conn.close()
+            return True
+        elif db_type == 'mysql':
+            conn = pymysql.connect(host=_db_host, port=_db_port, user=_db_user, password=_db_pass, database=_db_name_mysql)
+            cursor = conn.cursor()
+            cursor.execute("UPDATE users SET password_hash=%s WHERE username=%s", (ph, username))
+            conn.commit()
+            cursor.close()
+            conn.close()
+            return True
+    except Exception:
+        return False
+
+
+def delete_user(username):
+    """删除用户"""
+    try:
+        if db_type == 'sqlite':
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM users WHERE username=?", (username,))
+            conn.commit()
+            affected = cursor.rowcount
+            cursor.close()
+            conn.close()
+            return affected > 0
+        elif db_type == 'mysql':
+            conn = pymysql.connect(host=_db_host, port=_db_port, user=_db_user, password=_db_pass, database=_db_name_mysql)
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM users WHERE username=%s", (username,))
+            conn.commit()
+            affected = cursor.rowcount
+            cursor.close()
+            conn.close()
+            return affected > 0
+    except Exception:
+        return False
+
+
+# ========== 服务器所有权 ==========
+
+def get_user_servers(username):
+    """获取用户拥有的服务器 ID 列表"""
+    import json
+    try:
+        if db_type == 'sqlite':
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT servers FROM users WHERE username=?", (username,))
+            row = cursor.fetchone()
+            cursor.close()
+            conn.close()
+        elif db_type == 'mysql':
+            conn = pymysql.connect(host=_db_host, port=_db_port, user=_db_user, password=_db_pass, database=_db_name_mysql)
+            cursor = conn.cursor()
+            cursor.execute("SELECT servers FROM users WHERE username=%s", (username,))
+            row = cursor.fetchone()
+            cursor.close()
+            conn.close()
+        else:
+            return []
+        if row and row[0]:
+            return json.loads(row[0])
+        return []
+    except Exception:
+        return []
+
+
+def _save_user_servers(username, server_ids):
+    """保存用户拥有的服务器 ID 列表"""
+    import json
+    data = json.dumps(server_ids)
+    try:
+        if db_type == 'sqlite':
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("UPDATE users SET servers=? WHERE username=?", (data, username))
+            conn.commit()
+            cursor.close()
+            conn.close()
+        elif db_type == 'mysql':
+            conn = pymysql.connect(host=_db_host, port=_db_port, user=_db_user, password=_db_pass, database=_db_name_mysql)
+            cursor = conn.cursor()
+            cursor.execute("UPDATE users SET servers=%s WHERE username=%s", (data, username))
+            conn.commit()
+            cursor.close()
+            conn.close()
+        return True
+    except Exception:
+        return False
+
+
+def add_user_server(username, server_id):
+    """为用户添加一个服务器 ID"""
+    ids = get_user_servers(username)
+    if server_id not in ids:
+        ids.append(server_id)
+    return _save_user_servers(username, ids)
+
+
+def remove_user_server(username, server_id):
+    """为用户移除一个服务器 ID"""
+    ids = get_user_servers(username)
+    if server_id in ids:
+        ids.remove(server_id)
+    return _save_user_servers(username, ids)
+
+
+def check_server_owner(username, server_id):
+    """检查用户是否为服务器所有者"""
+    if check_admin(username):
+        return True  # 管理员可访问所有服务器
+    ids = get_user_servers(username)
+    return server_id in ids
+
+def get_server_limit(username):
+    """获取用户的开服上限"""
+    try:
+        if db_type == 'sqlite':
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT server_limit FROM users WHERE username=?", (username,))
+            row = cursor.fetchone()
+            cursor.close()
+            conn.close()
+            return row[0] if row else 0
+        elif db_type == 'mysql':
+            conn = pymysql.connect(host=_db_host, port=_db_port, user=_db_user, password=_db_pass, database=_db_name_mysql)
+            cursor = conn.cursor()
+            cursor.execute("SELECT server_limit FROM users WHERE username=%s", (username,))
+            row = cursor.fetchone()
+            cursor.close()
+            conn.close()
+            return row[0] if row else 0
+    except Exception:
+        return 0
+
+
+def set_server_limit(username, limit):
+    """设置用户的开服上限"""
+    try:
+        if db_type == 'sqlite':
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("UPDATE users SET server_limit=? WHERE username=?", (limit, username))
+            conn.commit()
+            cursor.close()
+            conn.close()
+            return True
+        elif db_type == 'mysql':
+            conn = pymysql.connect(host=_db_host, port=_db_port, user=_db_user, password=_db_pass, database=_db_name_mysql)
+            cursor = conn.cursor()
+            cursor.execute("UPDATE users SET server_limit=%s WHERE username=%s", (limit, username))
+            conn.commit()
+            cursor.close()
+            conn.close()
+            return True
+    except Exception:
+        return False

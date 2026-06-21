@@ -2,8 +2,8 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>登录 - MAY 平台</title>
-    <link href="https://fonts.googleapis.com/css2?family=VT323&family=Roboto+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登录 - HiveMC</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body class="login-body">
@@ -11,11 +11,10 @@
     <div class="login-container">
         <div class="login-box">
             <div class="login-header">
-                <h1>MAY <span class="accent">LOGIN</span></h1>
-                <p>请输入你的管理员凭证</p>
+                <h1>HiveMC</h1>
+                <p>登录到管理面板</p>
             </div>
 
-            <!-- 显示错误/成功信息 -->
             {% with messages = get_flashed_messages(with_categories=true) %}
                 {% if messages %}
                     <ul class="flashes">
@@ -35,13 +34,13 @@
                     <label>密码</label>
                     <input type="password" name="password" placeholder="请输入密码" required>
                 </div>
-                <button type="submit" class="btn-submit">接入系统</button>
+                <button type="submit" class="btn-submit">登录</button>
             </form>
             
             <div class="login-footer">
-                <a href="/">← 返回首页</a>
-                <span style="margin: 0 10px;">|</span>
-                <a href="/register">注册新账户 →</a>
+                <a href="/">返回首页</a>
+                <span style="margin: 0 8px; color: #ddd;">·</span>
+                <a href="/register">注册账户</a>
             </div>
         </div>
     </div>

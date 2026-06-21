@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>文件管理 - HiveMC</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+    <nav class="navbar">
+        <div class="logo">HiveMC</div>
+        <div class="nav-right">
+            <span class="welcome-text">{{ user.username }}</span>
+            <a href="{{ url_for('backend') }}" class="btn-login">返回</a>
+            <a href="{{ url_for('logout') }}" class="btn-logout">退出</a>
+        </div>
+    </nav>
+
+    <div class="fm-container">
+        <div class="fm-browser">
+            <div class="fm-browser-header">
+                <span class="fm-title">文件浏览器</span>
+                <span class="fm-server-id">#{{ server_id }}</span>
+            </div>
+            <div class="fm-toolbar">
+                <button class="fm-tb-btn" onclick="showCreateModal('file')">新建文件</button>
+                <button class="fm-tb-btn" onclick="showCreateModal('folder')">新建文件夹</button>
+                <button class="fm-tb-btn" onclick="document.getElementById('file-input').click()">上传文件</button>
+                <button class="fm-tb-btn" onclick="document.getElementById('folder-input').click()">上传文件夹</button>
+                <input type="file" id="file-input" multiple style="display:none">
+                <input type="file" id="folder-input" webkitdirectory multiple style="display:none">
+            </div>
+            <div class="fm-breadcrumb" id="fm-breadcrumb">
+                <span class="fm-crumb fm-crumb-root" data-path="">根目录</span>
+            </div>
+            <div class="fm-file-list" id="fm-file-list">
+                <div class="fm-loading">加载中...</div>
+            </div>
+        </div>
+
+        <div class="fm-editor">
+            <div class="fm-editor-header">
+                <span class="fm-editor-title" id="fm-editor-title">未选择文件</span>
+                <div class="fm-editor-actions">
+                    <button id="btn-save" class="fm-btn fm-btn-save" disabled>保存</button>
+                    <button id="btn-rename" class="fm-btn fm-btn-rename" disabled>重命名</button>
+                    <button id="btn-delete" class="fm-btn fm-btn-delete" disabled>删除</button>
+                </div>
+            </div>
+            <div class="fm-editor-body">
+                <div class="fm-editor-placeholder" id="fm-placeholder">
+                    <div class="placeholder-icon">&#x1F4C1;</div>
+                    <p>从左侧选择要编辑的文件</p>
+                    <p class="placeholder-hint">仅支持文本文件在线编辑</p>
+                </div>
+                <textarea id="fm-textarea" class="fm-textarea" style="display:none;" spellcheck="false"></textarea>
+                <div class="fm-save-status" id="fm-save-status"></div>
+                <div class="fm-upload-area" id="fm-upload-area" style="display:none;">
+                    <div class="fm-upload-header">上传中...</div>
+                    <div class="fm-upload-list" id="fm-upload-list"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 重命名弹窗 -->
+    <div class="fm-modal-overlay" id="rename-modal" style="display:none;">
+        <div class="fm-modal">
+            <div class="fm-modal-header">
+                <span>重命名</span>
+                <button class="fm-modal-close" onclick="closeModal('rename-modal')">&times;</button>
+            </div>
+            <div class="fm-modal-body">
+                <label>原名称：</label>
+                <p class="fm-old-name" id="rename-old-name"></p>
+                <label>新名称：</label>
+                <input type="text" id="rename-new-name" class="fm-modal-input" placeholder="输入新文件名">
+            </div>
+            <div class="fm-modal-footer">
+                <button class="fm-btn fm-btn-cancel" onclick="closeModal('rename-modal')">取消</button>
+                <button class="fm-btn fm-btn-save" onclick="confirmRename()">确认</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 新建弹窗 -->
+    <div class="fm-modal-overlay" id="create-modal" style="display:none;">
+        <div class="fm-modal">
+            <div class="fm-modal-header">
+                <span id="create-modal-title">新建文件</span>
+                <button class="fm-modal-close" onclick="closeModal('create-modal')">&times;</button>
+            </div>
+            <div class="fm-modal-body">
+                <label id="create-modal-label">文件名：</label>
+                <input type="text" id="create-name-input" class="fm-modal-input" placeholder="输入名称">
+            </div>
+            <div class="fm-modal-footer">
+                <button class="fm-btn fm-btn-cancel" onclick="closeModal('create-modal')">取消</button>
+                <button class="fm-btn fm-btn-save" onclick="confirmCreate()">确认</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 删除确认弹窗 -->
+    <div class="fm-modal-overlay" id="delete-modal" style="display:none;">
+        <div class="fm-modal">
+            <div class="fm-modal-header">
+                <span style="color:#e74c3c;">确认删除</span>
+                <button class="fm-modal-close" onclick="closeModal('delete-modal')">&times;</button>
+            </div>
+            <div class="fm-modal-body">
+                <p style="color:#555; margin-bottom:12px;">确定要删除以下文件吗？此操作不可撤销。</p>
+                <p class="fm-old-name" id="delete-target-name"></p>
+            </div>
+            <div class="fm-modal-footer">
+                <button class="fm-btn fm-btn-cancel" onclick="closeModal('delete-modal')">取消</button>
+                <button class="fm-btn" style="background:#e74c3c; color:#fff; border-color:#e74c3c;" onclick="confirmDelete()">确认删除</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        var SERVER_ID = {{ server_id }};
+        var currentDir = '';
+        var currentFile = null;
+
+        function loadFileList(dirPath) {
+            currentDir = dirPath;
+            var el = document.getElementById('fm-file-list');
+            el.innerHTML = '<div class="fm-loading">加载中...</div>';
+
+            fetch('/api/files/list?server_id=' + SERVER_ID + '&dir=' + encodeURIComponent(dirPath))
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.status === 'error') {
+                        el.innerHTML = '<div class="fm-error">' + data.msg + '</div>';
+                        return;
+                    }
+                    renderFileList(data.files, dirPath);
+                    renderBreadcrumb(dirPath);
+                });
+        }
+
+        function renderFileList(files, dirPath) {
+            var el = document.getElementById('fm-file-list');
+            var html = '';
+
+            if (dirPath !== '') {
+                var parentPath = dirPath.split('/').slice(0, -1).join('/');
+                html += '<div class="fm-file-item fm-folder" data-path="' + escapeAttr(parentPath) + '">' +
+                    '<span class="fm-icon">&#x1F4C2;</span>' +
+                    '<span class="fm-name">.. (上级目录)</span>' +
+                    '<span class="fm-size"></span></div>';
+            }
+
+            var dirs = files.filter(function(f) { return f.type === 'dir'; }).sort(function(a, b) { return a.name.localeCompare(b.name); });
+            var fileList = files.filter(function(f) { return f.type === 'file'; }).sort(function(a, b) { return a.name.localeCompare(b.name); });
+
+            dirs.forEach(function(f) {
+                var subPath = dirPath ? dirPath + '/' + f.name : f.name;
+                html += '<div class="fm-file-item fm-folder" data-path="' + escapeAttr(subPath) + '">' +
+                    '<span class="fm-icon">&#x1F4C1;</span>' +
+                    '<span class="fm-name">' + escapeHtml(f.name) + '</span>' +
+                    '<span class="fm-size">文件夹</span></div>';
+            });
+
+            fileList.forEach(function(f) {
+                var filePath = dirPath ? dirPath + '/' + f.name : f.name;
+                html += '<div class="fm-file-item fm-file" data-path="' + escapeAttr(filePath) + '" data-name="' + escapeAttr(f.name) + '">' +
+                    '<span class="fm-icon">' + getFileIcon(f.name) + '</span>' +
+                    '<span class="fm-name">' + escapeHtml(f.name) + '</span>' +
+                    '<span class="fm-size">' + formatSize(f.size) + '</span></div>';
+            });
+
+            if (dirs.length === 0 && fileList.length === 0) {
+                html += '<div class="fm-empty">此目录为空</div>';
+            }
+
+            el.innerHTML = html;
+        }
+
+        document.getElementById('fm-file-list').addEventListener('click', function(e) {
+            var item = e.target.closest('.fm-file-item');
+            if (!item) return;
+            var path = item.dataset.path;
+            if (!path) return;
+            if (item.classList.contains('fm-folder')) {
+                loadFileList(path);
+            } else if (item.classList.contains('fm-file')) {
+                openFile(path, item.dataset.name);
+            }
+        });
+
+        function renderBreadcrumb(dirPath) {
+            var el = document.getElementById('fm-breadcrumb');
+            var html = '<span class="fm-crumb fm-crumb-root" data-path="">根目录</span>';
+            if (dirPath) {
+                var parts = dirPath.split('/');
+                var accumulated = '';
+                parts.forEach(function(part, i) {
+                    accumulated = accumulated ? accumulated + '/' + part : part;
+                    html += '<span class="fm-sep">/</span>';
+                    if (i === parts.length - 1) {
+                        html += '<span class="fm-crumb fm-crumb-current">' + escapeHtml(part) + '</span>';
+                    } else {
+                        html += '<span class="fm-crumb" data-path="' + escapeAttr(accumulated) + '">' + escapeHtml(part) + '</span>';
+                    }
+                });
+            }
+            el.innerHTML = html;
+        }
+
+        document.getElementById('fm-breadcrumb').addEventListener('click', function(e) {
+            var crumb = e.target.closest('.fm-crumb');
+            if (!crumb || crumb.classList.contains('fm-crumb-current')) return;
+            var path = crumb.dataset.path;
+            if (path !== undefined) loadFileList(path);
+        });
+
+        function openFile(filePath, fileName) {
+            currentFile = { path: filePath, name: fileName };
+            document.getElementById('fm-editor-title').textContent = fileName;
+            document.getElementById('fm-placeholder').style.display = 'none';
+            var ta = document.getElementById('fm-textarea');
+            ta.style.display = 'block';
+            ta.value = '加载中...';
+            ta.disabled = true;
+            document.getElementById('btn-save').disabled = true;
+            document.getElementById('btn-rename').disabled = false;
+            document.getElementById('btn-delete').disabled = false;
+            document.getElementById('fm-save-status').textContent = '';
+
+            fetch('/api/files/read?server_id=' + SERVER_ID + '&file=' + encodeURIComponent(filePath))
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.status === 'error') { ta.value = data.msg; return; }
+                    ta.value = data.content;
+                    ta.disabled = false;
+                    document.getElementById('btn-save').disabled = false;
+                });
+        }
+
+        document.getElementById('btn-save').addEventListener('click', function() {
+            if (!currentFile) return;
+            var content = document.getElementById('fm-textarea').value;
+            var st = document.getElementById('fm-save-status');
+            st.textContent = '保存中...';
+            st.className = 'fm-save-status';
+
+            fetch('/api/files/write', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ server_id: SERVER_ID, file: currentFile.path, content: content })
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                st.textContent = data.status === 'success' ? '已保存' : data.msg;
+                st.className = 'fm-save-status ' + (data.status === 'success' ? 'success' : 'error');
+                setTimeout(function() { st.textContent = ''; }, 3000);
+            });
+        });
+
+        document.getElementById('fm-textarea').addEventListener('keydown', function(e) {
+            if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); document.getElementById('btn-save').click(); }
+        });
+
+        document.getElementById('btn-rename').addEventListener('click', function() {
+            if (!currentFile) return;
+            document.getElementById('rename-old-name').textContent = currentFile.name;
+            document.getElementById('rename-new-name').value = currentFile.name;
+            document.getElementById('rename-modal').style.display = 'flex';
+            setTimeout(function() { document.getElementById('rename-new-name').focus(); }, 100);
+        });
+
+        function confirmRename() {
+            var newName = document.getElementById('rename-new-name').value.trim();
+            if (!newName) { alert('名称不能为空'); return; }
+            if (newName.indexOf('/') >= 0 || newName.indexOf('\\') >= 0) { alert('名称不能包含路径分隔符'); return; }
+
+            var btn = document.querySelector('#rename-modal .fm-btn-save');
+            btn.textContent = '...'; btn.disabled = true;
+
+            fetch('/api/files/rename', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ server_id: SERVER_ID, old_path: currentFile.path, new_name: newName })
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                btn.textContent = '确认'; btn.disabled = false;
+                if (data.status === 'success') {
+                    closeModal('rename-modal');
+                    currentFile.name = newName;
+                    currentFile.path = currentDir ? currentDir + '/' + newName : newName;
+                    document.getElementById('fm-editor-title').textContent = newName;
+                    loadFileList(currentDir);
+                } else { alert(data.msg); }
+            });
+        }
+
+        document.getElementById('rename-modal').addEventListener('click', function(e) { if (e.target === this) closeModal('rename-modal'); });
+        document.getElementById('rename-new-name').addEventListener('keydown', function(e) { if (e.key === 'Enter') confirmRename(); if (e.key === 'Escape') closeModal('rename-modal'); });
+
+        var createType = 'file';
+
+        function showCreateModal(type) {
+            createType = type;
+            document.getElementById('create-modal-title').textContent = type === 'file' ? '新建文件' : '新建文件夹';
+            document.getElementById('create-modal-label').textContent = type === 'file' ? '文件名：' : '文件夹名：';
+            document.getElementById('create-name-input').placeholder = type === 'file' ? '例如: config.yml' : '例如: plugins';
+            document.getElementById('create-name-input').value = '';
+            document.getElementById('create-modal').style.display = 'flex';
+        }
+
+        function confirmCreate() {
+            var name = document.getElementById('create-name-input').value.trim();
+            if (!name) { alert('名称不能为空'); return; }
+            if (name.indexOf('/') >= 0 || name.indexOf('\\') >= 0) { alert('名称不能包含路径分隔符'); return; }
+
+            var ep = createType === 'file' ? '/api/files/create' : '/api/files/mkdir';
+            var btn = document.querySelector('#create-modal .fm-btn-save');
+            btn.textContent = '...'; btn.disabled = true;
+
+            fetch(ep, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ server_id: SERVER_ID, dir: currentDir, name: name })
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                btn.textContent = '确认'; btn.disabled = false;
+                if (data.status === 'success') { closeModal('create-modal'); loadFileList(currentDir); }
+                else { alert(data.msg); }
+            });
+        }
+
+        document.getElementById('create-modal').addEventListener('click', function(e) { if (e.target === this) closeModal('create-modal'); });
+        document.getElementById('create-name-input').addEventListener('keydown', function(e) { if (e.key === 'Enter') confirmCreate(); if (e.key === 'Escape') closeModal('create-modal'); });
+
+        document.getElementById('btn-delete').addEventListener('click', function() {
+            if (!currentFile) return;
+            document.getElementById('delete-target-name').textContent = currentFile.name;
+            document.getElementById('delete-modal').style.display = 'flex';
+        });
+
+        function confirmDelete() {
+            var btn = document.querySelector('#delete-modal button:last-child');
+            btn.textContent = '...'; btn.disabled = true;
+
+            fetch('/api/files/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ server_id: SERVER_ID, file: currentFile.path })
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                btn.textContent = '确认删除'; btn.disabled = false;
+                if (data.status === 'success') {
+                    closeModal('delete-modal');
+                    currentFile = null;
+                    document.getElementById('fm-editor-title').textContent = '未选择文件';
+                    document.getElementById('fm-textarea').style.display = 'none';
+                    document.getElementById('fm-placeholder').style.display = 'flex';
+                    document.getElementById('btn-save').disabled = true;
+                    document.getElementById('btn-rename').disabled = true;
+                    document.getElementById('btn-delete').disabled = true;
+                    loadFileList(currentDir);
+                } else { alert(data.msg); }
+            });
+        }
+
+        document.getElementById('delete-modal').addEventListener('click', function(e) { if (e.target === this) closeModal('delete-modal'); });
+
+        function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+
+        document.getElementById('file-input').addEventListener('change', function() { if (this.files.length > 0) { uploadFiles(this.files); this.value = ''; } });
+        document.getElementById('folder-input').addEventListener('change', function() { if (this.files.length > 0) { uploadFiles(this.files); this.value = ''; } });
+
+        function uploadFiles(fileList) {
+            var area = document.getElementById('fm-upload-area');
+            var list = document.getElementById('fm-upload-list');
+            area.style.display = 'block';
+            list.innerHTML = '';
+            document.getElementById('fm-placeholder').style.display = 'none';
+            document.getElementById('fm-textarea').style.display = 'none';
+            if (currentFile) {
+                document.getElementById('btn-save').disabled = true;
+                document.getElementById('btn-rename').disabled = true;
+                document.getElementById('btn-delete').disabled = true;
+            }
+
+            var completed = 0, succeeded = 0, failed = 0;
+            var files = Array.from(fileList);
+            var total = files.length;
+            var items = [];
+
+            files.forEach(function(f) {
+                var div = document.createElement('div');
+                div.className = 'fm-upload-item';
+                div.innerHTML = '<span class="fm-upload-icon">-</span><span class="fm-upload-name">' + escapeHtml(f.name) + '</span><span class="fm-upload-status">等待中</span>';
+                list.appendChild(div);
+                items.push(div);
+            });
+
+            function uploadNext(index) {
+                if (index >= files.length) {
+                    setTimeout(function() {
+                        area.style.display = 'none';
+                        loadFileList(currentDir);
+                    }, 1000);
+                    return;
+                }
+                var file = files[index];
+                var item = items[index];
+                var fd = new FormData();
+                fd.append('server_id', SERVER_ID);
+                fd.append('dir', currentDir);
+                fd.append('file', file, file.name);
+
+                item.querySelector('.fm-upload-icon').textContent = '...';
+                item.querySelector('.fm-upload-status').textContent = '上传中';
+
+                fetch('/api/files/upload', { method: 'POST', body: fd })
+                    .then(function(r) { return r.json(); })
+                    .then(function(data) {
+                        if (data.status === 'success') { succeeded++; item.querySelector('.fm-upload-icon').textContent = '+'; item.querySelector('.fm-upload-status').textContent = '完成'; }
+                        else { failed++; item.querySelector('.fm-upload-icon').textContent = '!'; item.querySelector('.fm-upload-status').textContent = data.msg; }
+                        completed++;
+                        document.querySelector('.fm-upload-header').textContent = '上传中 (' + completed + '/' + total + ')';
+                        uploadNext(index + 1);
+                    });
+            }
+            uploadNext(0);
+        }
+
+        function showSaveStatus(msg, type) {
+            var el = document.getElementById('fm-save-status');
+            el.textContent = msg;
+            el.className = 'fm-save-status ' + type;
+            setTimeout(function() { el.textContent = ''; }, 3000);
+        }
+
+        function getFileIcon(name) {
+            var ext = name.split('.').pop().toLowerCase();
+            var m = { 'txt':'&#x1F4C4;', 'yml':'&#x2699;', 'yaml':'&#x2699;', 'json':'&#x1F4CB;', 'py':'&#x1F40D;', 'js':'&#x1F4DC;', 'css':'&#x1F3A8;', 'html':'&#x1F310;', 'md':'&#x1F4DD;', 'log':'&#x1F4CA;', 'jar':'&#x1F4E6;', 'zip':'&#x1F4E6;', 'png':'&#x1F5BC;', 'jpg':'&#x1F5BC;', 'properties':'&#x1F527;', 'conf':'&#x1F527;' };
+            return m[ext] || '&#x1F4C4;';
+        }
+
+        function formatSize(bytes) {
+            if (bytes === null) return '';
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+        }
+
+        function escapeHtml(str) { var d = document.createElement('div'); d.textContent = str; return d.innerHTML; }
+        function escapeAttr(str) { return str.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+        loadFileList('');
+    </script>
+
+</body>
+</html>

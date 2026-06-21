@@ -3,70 +3,39 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MAY - 朋友们的小服</title>
-    <link href="https://fonts.googleapis.com/css2?family=VT323&family=Roboto+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <title>HiveMC - Minecraft 服务器管理</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
 
-    <!-- 顶部导航 -->
     <nav class="navbar">
-        <div class="logo">MAY <span class="sub">PANEL</span></div>
+        <div class="logo">HiveMC</div>
         <div class="nav-right">
             {% if user %}
-                <!-- 已登录状态 -->
-                <span class="welcome-text">Hi, {{ user }}</span>
+                <span class="welcome-text">{{ user }}</span>
                 <a href="{{ url_for('logout') }}" class="btn-logout">退出</a>
             {% else %}
-                <!-- 未登录状态 -->
                 <a href="{{ url_for('login_page') }}" class="btn-login">登录</a>
             {% endif %}
         </div>
     </nav>
 
-    <!-- 头部区域 -->
     <header class="hero">
         <div class="hero-content">
-            <h1>欢迎来到 MAY 空间站</h1>
-            <p>这是一个非盈利的 Minecraft 共享开服平台</p>
-            
+            <h1>Minecraft 服务器管理面板</h1>
+            <p>管理你的 Minecraft 服务器，随时随地。</p>
             <div class="actions">
                 {% if user %}
-                    <a href="{{ url_for('backend') }}" class="btn-primary">我要开服</a>
+                    <a href="{{ url_for('backend') }}" class="btn-primary">进入后台</a>
                 {% else %}
-                    <a href="{{ url_for('login_page') }}" class="btn-primary">我要开服</a>
+                    <a href="{{ url_for('login_page') }}" class="btn-primary">开始使用</a>
                 {% endif %}
-                <a href="#" class="btn-secondary">查看文档</a>
             </div>
         </div>
     </header>
 
-    <!-- 服务器列表
-    <section class="server-list-section">
-        <div class="container">
-            <h2> 活跃服务器</h2>
-            <div class="server-grid">
-                {% for server in servers %}
-                <div class="server-card">
-                    <div class="card-header">
-                        <span class="status-dot {{ server.status }}"></span>
-                        <span class="server-name">{{ server.name }}</span>
-                    </div>
-                    <div class="card-body">
-                        <p>服主: <b>{{ server.owner }}</b></p>
-                        <p>状态: <span class="status-text">{{ server.players }}</span></p>
-                    </div>
-                    <div class="card-footer">
-                        <button>加入游戏</button>
-                    </div>
-                </div>
-                {% endfor %}
-            </div>
-        </div>
-    </section>
- -->
     <footer>
-        <p>Powered by MAY</p>
+        <p>HiveMC</p>
     </footer>
 
 </body>

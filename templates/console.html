@@ -2,118 +2,135 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>MAY - 远程控制台</title>
-    <link href="https://fonts.googleapis.com/css2?family=VT323&family=Roboto+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>控制台 - HiveMC</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-    <!-- 顶部导航 -->
+
     <nav class="navbar">
-        <div class="logo">MAY <span class="sub">PANEL</span></div>
+        <div class="logo">HiveMC</div>
         <div class="nav-right">
-            <span class="welcome-text">Hi, {{ user.username }}</span>
+            <span class="welcome-text">{{ user.username }}</span>
+            <a href="{{ url_for('backend') }}" class="btn-login">返回</a>
             <a href="{{ url_for('logout') }}" class="btn-logout">退出</a>
         </div>
     </nav>
 
     <div class="console-container">
-        <!-- 顶部控制栏 -->
         <div class="console-header">
-            <button id="btn-start" class="btn-action">启动服务端</button>
-            <!-- <span id="server-status" class="status-indicator">离线</span> -->
+            <div class="console-header-left">
+                <button id="btn-start" class="btn-action btn-start">启动</button>
+                <button id="btn-stop" class="btn-action btn-stop" disabled>停止</button>
+                <button id="btn-restart" class="btn-action btn-restart" disabled>重启</button>
+            </div>
+            <span id="server-status" class="status-indicator">离线</span>
         </div>
 
-        <!-- 日志显示区域 -->
-        <div id="console-logs" class="console-logs">
-        </div>
+        <div id="console-logs" class="console-logs"></div>
 
-        <!-- 指令输入区域 -->
         <div class="console-input-area">
-            <span class="prompt">></span>
-            <input type="text" id="cmd-input" placeholder="输入指令 (如 /op, /gamemode)..." autocomplete="on">
+            <span class="prompt">&gt;</span>
+            <input type="text" id="cmd-input" placeholder="输入指令..." autocomplete="on">
             <button id="btn-send">发送</button>
         </div>
     </div>
 
     <script>
-        const SERVER_ID = "{{ server_id }}" ;
-        const logContainer = document.getElementById('console-logs');
-        const inputField = document.getElementById('cmd-input');
-        const sendBtn = document.getElementById('btn-send');
-        const startBtn = document.getElementById('btn-start');
-        const statusSpan = document.getElementById('server-status');
+        var SERVER_ID = "{{ server_id }}";
+        var logContainer = document.getElementById('console-logs');
+        var inputField = document.getElementById('cmd-input');
+        var sendBtn = document.getElementById('btn-send');
+        var startBtn = document.getElementById('btn-start');
+        var stopBtn = document.getElementById('btn-stop');
+        var restartBtn = document.getElementById('btn-restart');
+        var statusSpan = document.getElementById('server-status');
 
-        // 1. 启动服务端
-        startBtn.addEventListener('click', () => {
-            const sid = SERVER_ID; 
+        function setRunningState(running) {
+            startBtn.disabled = running;
+            stopBtn.disabled = !running;
+            restartBtn.disabled = !running;
+            statusSpan.textContent = running ? '在线' : '离线';
+        }
 
-            fetch('/api/start', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ server_id: sid })
-            })
-            .then(res => res.json())
-            .then(data => addLog(data.msg, 'system'))
-            .catch(err => addLog("启动请求失败: " + err, 'error'));
-        });
+        function addLog(text, type) {
+            var div = document.createElement('div');
+            div.className = 'log-line ' + (type || 'info');
+            var time = new Date().toLocaleTimeString();
+            div.innerText = '[' + time + '] ' + text;
+            logContainer.appendChild(div);
+        }
 
-        // 2. 发送指令
-        function sendCommand() {
-            const cmd = inputField.value.trim();
-            if (!cmd) return;
-
-            fetch('/api/command', {
+        function api(url, body, cb) {
+            fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ command: cmd, server_id: SERVER_ID })
-            })
-            .then(res => res.json())
-            .then(data => {
-                if(data.status === 'error') addLog(data.msg, 'error');
-                inputField.value = ''; // 清空输入框
+                body: JSON.stringify(body)
+            }).then(function(r) { return r.json(); }).then(cb);
+        }
+
+        startBtn.addEventListener('click', function() {
+            api('/api/start', { server_id: SERVER_ID }, function(data) {
+                addLog(data.msg, 'system');
+                if (typeof data.msg === 'number' || !isNaN(data.msg)) setRunningState(true);
             });
+        });
+
+        stopBtn.addEventListener('click', function() {
+            api('/api/stop', { server_id: SERVER_ID }, function(data) {
+                addLog(data.msg, 'system');
+                setRunningState(false);
+            });
+        });
+
+        restartBtn.addEventListener('click', function() {
+            api('/api/restart', { server_id: SERVER_ID }, function(data) {
+                addLog(data.msg, 'system');
+                setRunningState(true);
+            });
+        });
+
+        function sendCommand() {
+            var cmd = inputField.value.trim();
+            if (!cmd) return;
+            api('/api/command', { command: cmd, server_id: SERVER_ID }, function(data) {
+                if (data.status === 'error') addLog(data.msg, 'error');
+            });
+            inputField.value = '';
         }
 
         sendBtn.addEventListener('click', sendCommand);
-        inputField.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') sendCommand();
-        });
+        inputField.addEventListener('keydown', function(e) { if (e.key === 'Enter') sendCommand(); });
 
-        // 3. 实时获取日志 (轮询)
         function fetchLogs() {
-            
-            fetch('/api/console?server_id={{ server_id }}')
-                .then(res => res.json())
-                .then(data => {
+            fetch('/api/console?server_id=' + SERVER_ID)
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
                     if (data.logs.length > 0) {
-                        data.logs.forEach(log => {
-                            // 简单的日志分类着色
-                            let type = 'info';
-                            if (log.includes("ERROR")) type = 'error';
-                            if (log.includes("WARN")) type = 'warn';
-                            if (log.includes("Starting")) type = 'success';
+                        data.logs.forEach(function(log) {
+                            var type = 'info';
+                            if (log.indexOf('ERROR') >= 0) type = 'error';
+                            else if (log.indexOf('WARN') >= 0) type = 'warn';
+                            else if (log.indexOf('Starting') >= 0) type = 'success';
+                            else if (log.indexOf('Done') >= 0 || log.indexOf('For help') >= 0) type = 'success';
                             addLog(log, type);
                         });
-                        // 自动滚动到底部
                         logContainer.scrollTop = logContainer.scrollHeight;
                     }
                 });
         }
 
-        // 每 500 毫秒检查一次新日志
         setInterval(fetchLogs, 500);
 
-        // 辅助函数：添加日志到界面
-        function addLog(text, type) {
-            const div = document.createElement('div');
-            div.className = `log-line ${type}`;
-            // 加上时间戳
-            const time = new Date().toLocaleTimeString();
-            div.innerText = `[${time}] ${text}`;
-            logContainer.appendChild(div);
+        function checkStatus() {
+            fetch('/api/server/status?server_id=' + SERVER_ID)
+                .then(function(r) { return r.json(); })
+                .then(function(data) { if (data.status === 'success') setRunningState(data.running); });
         }
+
+        setInterval(checkStatus, 5000);
+        checkStatus();
     </script>
+
 </body>
 </html>

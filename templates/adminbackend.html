@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>管理 - HiveMC</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+    <nav class="navbar">
+        <div class="logo">HiveMC</div>
+        <div class="nav-right">
+            <span class="welcome-text">{{ user.username }}</span>
+            <a href="{{ url_for('backend') }}" class="btn-login">用户后台</a>
+            <a href="{{ url_for('logout') }}" class="btn-logout">退出</a>
+        </div>
+    </nav>
+
+    <main class="dashboard">
+
+        <section class="servers-section">
+            <div class="section-header">
+                <h2>所有服务器</h2>
+            </div>
+            <div class="server-grid" id="admin-server-grid">
+                <div class="fm-loading">加载中...</div>
+            </div>
+        </section>
+
+        <section class="servers-section">
+            <div class="section-header">
+                <h2>用户管理</h2>
+            </div>
+            <div class="admin-user-table-wrapper">
+                <table class="admin-user-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>用户名</th>
+                            <th>管理员</th>
+                            <th>开服上限</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="user-tbody">
+                        <tr><td colspan="5" class="fm-loading">加载中...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- 删除服务器确认弹窗 -->
+    <div class="fm-modal-overlay" id="delete-server-modal" style="display:none;">
+        <div class="fm-modal">
+            <div class="fm-modal-header">
+                <span>删除服务器</span>
+                <button class="fm-modal-close" onclick="closeModal('delete-server-modal')">&times;</button>
+            </div>
+            <div class="fm-modal-body">
+                <p style="color:#e74c3c; font-weight:500; margin-bottom:12px;">此操作不可撤销，所有文件将被永久删除。</p>
+                <p style="font-size:0.85rem; color:#888; margin-bottom:12px;">请输入 <strong id="delete-server-name-confirm" style="color:#e74c3c;"></strong> 确认删除：</p>
+                <input type="text" id="delete-server-confirm-input" class="fm-modal-input" placeholder="输入服务器名称确认">
+            </div>
+            <div class="fm-modal-footer">
+                <button class="fm-btn fm-btn-cancel" onclick="closeModal('delete-server-modal')">取消</button>
+                <button class="fm-btn" id="btn-confirm-delete-server" style="background:#e74c3c; color:#fff; border-color:#e74c3c;" onclick="confirmDeleteServer()" disabled>确认删除</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 重置密码弹窗 -->
+    <div class="fm-modal-overlay" id="reset-pwd-modal" style="display:none;">
+        <div class="fm-modal" style="width:400px;">
+            <div class="fm-modal-header">
+                <span>重置密码</span>
+                <button class="fm-modal-close" onclick="closeModal('reset-pwd-modal')">&times;</button>
+            </div>
+            <div class="fm-modal-body">
+                <p style="color:#666; margin-bottom:8px;">用户：<strong id="reset-pwd-user" style="color:#3498db;"></strong></p>
+                <label>新密码：</label>
+                <input type="password" id="reset-pwd-input" class="fm-modal-input" placeholder="至少 6 位">
+            </div>
+            <div class="fm-modal-footer">
+                <button class="fm-btn fm-btn-cancel" onclick="closeModal('reset-pwd-modal')">取消</button>
+                <button class="fm-btn fm-btn-save" onclick="confirmResetPwd()">确认重置</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        var resetPwdTarget = null;
+
+        function loadUsers() {
+            var tbody = document.getElementById('user-tbody');
+            tbody.innerHTML = '<tr><td colspan="5" class="fm-loading">加载中...</td></tr>';
+
+            fetch('/api/admin/users')
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.status === 'error') {
+                        tbody.innerHTML = '<tr><td colspan="5" class="fm-error">' + data.msg + '</td></tr>';
+                        return;
+                    }
+                    var html = '';
+                    data.users.forEach(function(u) {
+                        var isSelf = (u.username === '{{ user.username }}');
+                        html += '<tr>' +
+                            '<td>' + u.id + '</td>' +
+                            '<td>' + escapeHtml(u.username) + '</td>' +
+                            '<td><label class="admin-toggle"><input type="checkbox" ' + (u.if_admin ? 'checked' : '') + ' onchange="toggleAdmin(\'' + escapeHtml(u.username) + '\', this.checked)" ' + (isSelf || u.username === 'admin' ? 'disabled' : '') + '><span class="toggle-label">' + (u.if_admin ? '是' : '否') + '</span></label></td>' +
+                            '<td><div class="admin-limit-edit" style="display:flex;align-items:center;gap:6px;">' +
+                                '<span id="limit-val-' + u.id + '" class="limit-value">' + u.server_limit + '</span>' +
+                                '<input type="number" min="0" id="limit-input-' + u.id + '" class="admin-limit-input" value="' + u.server_limit + '" style="display:none;">' +
+                                '<button class="admin-btn admin-btn-sm" id="limit-edit-btn-' + u.id + '" onclick="editLimit(' + u.id + ', \'' + escapeHtml(u.username) + '\')">编辑</button>' +
+                                '<button class="admin-btn admin-btn-sm admin-btn-save" id="limit-save-btn-' + u.id + '" style="display:none;" onclick="saveLimit(' + u.id + ', \'' + escapeHtml(u.username) + '\')">保存</button>' +
+                                '<button class="admin-btn admin-btn-sm" id="limit-cancel-btn-' + u.id + '" style="display:none;" onclick="cancelEditLimit(' + u.id + ')">取消</button>' +
+                            '</div></td>' +
+                            '<td class="admin-actions">' +
+                                '<button class="admin-btn admin-btn-pwd" onclick="showResetPwd(\'' + escapeHtml(u.username) + '\')">改密</button>' +
+                                '<button class="admin-btn admin-btn-del" onclick="confirmDelUser(\'' + escapeHtml(u.username) + '\')" ' + (isSelf || u.username === 'admin' ? 'disabled style="opacity:0.3;"' : '') + '>删除</button>' +
+                            '</td></tr>';
+                    });
+                    tbody.innerHTML = html;
+                });
+        }
+
+        function toggleAdmin(username, checked) {
+            fetch('/api/admin/user/set_admin', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: username, is_admin: checked })
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                showToast(data.msg, data.status === 'success' ? 'success' : 'error');
+                if (data.status === 'success') loadUsers();
+            });
+        }
+
+        function showResetPwd(username) {
+            resetPwdTarget = username;
+            document.getElementById('reset-pwd-user').textContent = username;
+            document.getElementById('reset-pwd-input').value = '';
+            document.getElementById('reset-pwd-modal').style.display = 'flex';
+        }
+
+        function confirmResetPwd() {
+            var pwd = document.getElementById('reset-pwd-input').value.trim();
+            if (pwd.length < 6) { alert('密码至少 6 位'); return; }
+
+            var btn = document.querySelector('#reset-pwd-modal .fm-btn-save');
+            btn.textContent = '...'; btn.disabled = true;
+
+            fetch('/api/admin/user/reset_password', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: resetPwdTarget, new_password: pwd })
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                btn.textContent = '确认重置'; btn.disabled = false;
+                closeModal('reset-pwd-modal');
+                showToast(data.msg, data.status === 'success' ? 'success' : 'error');
+            });
+        }
+
+        function editLimit(userId, username) {
+            document.getElementById('limit-val-' + userId).style.display = 'none';
+            document.getElementById('limit-input-' + userId).style.display = '';
+            document.getElementById('limit-edit-btn-' + userId).style.display = 'none';
+            document.getElementById('limit-save-btn-' + userId).style.display = '';
+            document.getElementById('limit-cancel-btn-' + userId).style.display = '';
+        }
+
+        function cancelEditLimit(userId) {
+            document.getElementById('limit-val-' + userId).style.display = '';
+            document.getElementById('limit-input-' + userId).style.display = 'none';
+            document.getElementById('limit-edit-btn-' + userId).style.display = '';
+            document.getElementById('limit-save-btn-' + userId).style.display = 'none';
+            document.getElementById('limit-cancel-btn-' + userId).style.display = 'none';
+        }
+
+        function saveLimit(userId, username) {
+            var input = document.getElementById('limit-input-' + userId);
+            var val = parseInt(input.value);
+            if (isNaN(val) || val < 0) { alert('请输入非负整数'); return; }
+
+            var btn = document.getElementById('limit-save-btn-' + userId);
+            btn.textContent = '...'; btn.disabled = true;
+
+            fetch('/api/admin/user/set_limit', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: username, limit: val })
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                btn.textContent = '保存'; btn.disabled = false;
+                if (data.status === 'success') {
+                    document.getElementById('limit-val-' + userId).textContent = val;
+                    cancelEditLimit(userId);
+                }
+                showToast(data.msg, data.status === 'success' ? 'success' : 'error');
+            });
+        }
+
+        document.getElementById('reset-pwd-modal').addEventListener('click', function(e) { if (e.target === this) closeModal('reset-pwd-modal'); });
+        document.getElementById('reset-pwd-input').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') confirmResetPwd();
+            if (e.key === 'Escape') closeModal('reset-pwd-modal');
+        });
+
+        function confirmDelUser(username) {
+            if (!confirm('确定要删除用户「' + username + '」吗？')) return;
+            fetch('/api/admin/user/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: username })
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                showToast(data.msg, data.status === 'success' ? 'success' : 'error');
+                if (data.status === 'success') loadUsers();
+            });
+        }
+
+        function loadAdminServers() {
+            var grid = document.getElementById('admin-server-grid');
+
+            fetch('/api/servers')
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.status === 'error') { grid.innerHTML = '<div class="fm-error">' + data.msg + '</div>'; return; }
+                    if (data.servers.length === 0) { grid.innerHTML = '<div class="fm-empty" style="padding:40px;text-align:center;color:#999;">暂无服务器</div>'; return; }
+                    var html = '';
+                    data.servers.forEach(function(s) {
+                        var running = s.status === 'running';
+                        html += '<div class="server-card">' +
+                            '<div class="card-header"><span class="status-dot ' + s.status + '"></span><span class="server-name">' + escapeHtml(s.name) + '</span></div>' +
+                            '<div class="card-body">' +
+                                '<p>ID: <span class="version-text">#' + s.server_id + '</span></p>' +
+                                '<p>启动脚本: ' + (s.has_start_txt ? '就绪' : '缺失') + '</p>' +
+                                '<p>状态: <span class="status-badge ' + s.status + '">' + (running ? '运行中' : '已停止') + '</span></p>' +
+                            '</div>' +
+                            '<div class="card-footer">' +
+                                '<button class="btn-manage" onclick="gotofilemanager(' + s.server_id + ')">文件</button>' +
+                                '<button class="btn-console" onclick="gotoconsole(' + s.server_id + ')">控制台</button>' +
+                                '<button class="btn-delete-server" onclick="showDeleteServerModal(' + s.server_id + ')">删除</button>' +
+                            '</div></div>';
+                    });
+                    grid.innerHTML = html;
+                });
+        }
+
+        var deleteServerId = null;
+
+        function showDeleteServerModal(serverId) {
+            deleteServerId = serverId;
+            var name = '服务器 #' + serverId;
+            document.getElementById('delete-server-name-confirm').textContent = name;
+            document.getElementById('delete-server-confirm-input').value = '';
+            document.getElementById('btn-confirm-delete-server').disabled = true;
+            document.getElementById('delete-server-modal').style.display = 'flex';
+        }
+
+        document.getElementById('delete-server-confirm-input').addEventListener('input', function() {
+            var expected = '服务器 #' + deleteServerId;
+            document.getElementById('btn-confirm-delete-server').disabled = (this.value !== expected);
+        });
+
+        document.getElementById('delete-server-confirm-input').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && !document.getElementById('btn-confirm-delete-server').disabled) confirmDeleteServer();
+            if (e.key === 'Escape') closeModal('delete-server-modal');
+        });
+
+        function confirmDeleteServer() {
+            var btn = document.getElementById('btn-confirm-delete-server');
+            btn.textContent = '删除中...';
+            btn.disabled = true;
+
+            fetch('/api/server/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ server_id: deleteServerId })
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                btn.textContent = '确认删除';
+                if (data.status === 'success') {
+                    closeModal('delete-server-modal');
+                    loadAdminServers();
+                    showToast(data.msg, 'success');
+                } else {
+                    showToast(data.msg, 'error');
+                }
+            })
+            .catch(function() { btn.textContent = '确认删除'; });
+        }
+
+        document.getElementById('delete-server-modal').addEventListener('click', function(e) {
+            if (e.target === this) closeModal('delete-server-modal');
+        });
+
+        function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+        function gotoconsole(id) { window.location.href = '/console?server_id=' + id; }
+        function gotofilemanager(id) { window.location.href = '/filemanager?server_id=' + id; }
+
+        function escapeHtml(str) { var d = document.createElement('div'); d.textContent = str; return d.innerHTML; }
+
+        function showToast(msg, type) {
+            var t = document.createElement('div');
+            t.style.cssText = 'position:fixed;top:20px;right:20px;padding:10px 20px;border-radius:8px;font-size:0.85rem;z-index:9999;';
+            t.style.background = type === 'success' ? '#3498db' : '#e74c3c';
+            t.style.color = '#fff';
+            t.textContent = msg;
+            document.body.appendChild(t);
+            setTimeout(function() { t.style.opacity = '0'; setTimeout(function() { t.remove(); }, 300); }, 3000);
+        }
+
+        loadUsers();
+        loadAdminServers();
+        setInterval(loadAdminServers, 10000);
+    </script>
+
+</body>
+</html>
