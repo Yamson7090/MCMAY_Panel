@@ -599,6 +599,8 @@ footer {
     transition: all 0.15s;
 }
 .fm-tb-btn:hover { border-color: #3498db; color: #3498db; }
+.fm-tb-download { border-color: #27ae60; color: #27ae60; }
+.fm-tb-download:hover { background: #27ae60 !important; color: #fff !important; border-color: #27ae60 !important; }
 
 /* 面包屑 */
 .fm-breadcrumb {
@@ -643,7 +645,24 @@ footer {
 
 .fm-icon { font-size: 1rem; width: 20px; text-align: center; flex-shrink: 0; }
 .fm-name { flex: 1; font-size: 0.82rem; color: #333; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fm-size { font-size: 0.72rem; color: #bbb; flex-shrink: 0; }
+.fm-size { font-size: 0.72rem; color: #bbb; flex-shrink: 0; width: 60px; }
+
+/* 文件列表中的操作按钮 */
+.fm-dl-btn,
+.fm-del-btn {
+    font-size: 0.85rem;
+    opacity: 0;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+    transition: all 0.15s;
+    flex-shrink: 0;
+    user-select: none;
+}
+.fm-file-item:hover .fm-dl-btn,
+.fm-file-item:hover .fm-del-btn { opacity: 0.6; }
+.fm-dl-btn:hover { opacity: 1 !important; background: #e8f5e9; }
+.fm-del-btn:hover { opacity: 1 !important; background: #ffebee; }
 
 .fm-loading,
 .fm-error,
@@ -694,6 +713,8 @@ footer {
 .fm-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .fm-btn-save { border-color: #3498db; color: #3498db; }
 .fm-btn-save:hover:not(:disabled) { background: #3498db; color: #fff; }
+.fm-btn-download { border-color: #27ae60; color: #27ae60; }
+.fm-btn-download:hover:not(:disabled) { background: #27ae60; color: #fff; }
 .fm-btn-rename { border-color: #f39c12; color: #f39c12; }
 .fm-btn-rename:hover:not(:disabled) { background: #f39c12; color: #fff; }
 .fm-btn-delete { border-color: #e74c3c; color: #e74c3c; }
@@ -1065,5 +1086,71 @@ footer {
     color: #999;
     font-size: 0.8rem;
     flex-shrink: 0;
+}
+
+/* --- 打包下载进度条 --- */
+.fm-progress-modal {
+    width: 360px;
+    text-align: center;
+}
+
+.fm-progress-body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 32px 24px 28px;
+}
+
+.fm-progress-icon {
+    font-size: 2.4rem;
+    line-height: 1;
+}
+
+.fm-progress-text {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #333;
+}
+
+.fm-progress-track {
+    width: 100%;
+    height: 8px;
+    background: #eee;
+    border-radius: 4px;
+    overflow: hidden;
+    margin: 4px 0;
+}
+
+.fm-progress-bar {
+    height: 100%;
+    width: 0%;
+    background: #3498db;
+    border-radius: 4px;
+    transition: width 0.3s ease;
+}
+
+.fm-progress-bar.complete {
+    background: #27ae60;
+}
+
+.fm-progress-bar.indeterminate {
+    width: 30%;
+    animation: fmProgressIndeterminate 1.5s ease-in-out infinite;
+}
+
+.fm-progress-bar.error {
+    background: #e74c3c;
+}
+
+@keyframes fmProgressIndeterminate {
+    0%   { width: 10%; margin-left: 0%; }
+    50%  { width: 50%; margin-left: 30%; }
+    100% { width: 10%; margin-left: 90%; }
+}
+
+.fm-progress-hint {
+    font-size: 0.78rem;
+    color: #999;
 }
 

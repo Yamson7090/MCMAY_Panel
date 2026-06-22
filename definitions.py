@@ -22,6 +22,7 @@ def load_config():
         exit(1)
 
 config = load_config()
+SERVER_DIR = config['server']['server_directory']
 
 def read_start_config(filepath):
     """读取启动配置文件，返回 (jar_name, java_args, nogui) 元组。
@@ -107,23 +108,23 @@ def start_server(server_id):
         return "服务端已经在运行中！"
     
     # 判断启动脚本是否存在
-    if not os.path.exists(f"servers/{server_id}/start.txt"):
-        with open(f"servers/{server_id}/start.txt", 'w', encoding='utf-8') as f:
+    if not os.path.exists(f"{SERVER_DIR}/{server_id}/start.txt"):
+        with open(f"{SERVER_DIR}/{server_id}/start.txt", 'w', encoding='utf-8') as f:
             with open('defaults/default_start.txt', 'r', encoding='utf-8') as default_file:
                 file=default_file.read()
             f.write(file)
         return f"启动脚本缺失，已生成默认 start.txt，请编辑后重新尝试启动服务器 {server_id}。"
 
     # 读取启动配置（参数 + JAR 名 + nogui）
-    start_config = read_start_config(f"servers/{server_id}/start.txt")
+    start_config = read_start_config(f"{SERVER_DIR}/{server_id}/start.txt")
     if start_config is None:
         return "启动配置文件读取失败，请检查 start.txt 格式"
     jar_name, java_args, nogui = start_config
 
     # 构建安全的启动命令：始终使用 java 作为可执行文件
-    jar_path = os.path.join(os.getcwd(), "servers", str(server_id), jar_name)
+    jar_path = os.path.join(os.getcwd(), SERVER_DIR, str(server_id), jar_name)
     if not os.path.isfile(jar_path):
-        return f"找不到 JAR 文件: {jar_name}，请将服务端 JAR 上传到 servers/{server_id}/ 目录"
+        return f"找不到 JAR 文件: {jar_name}，请将服务端 JAR 上传到 {SERVER_DIR}/{server_id}/ 目录"
 
     cmd = ['java']
     if java_args:
@@ -140,7 +141,7 @@ def start_server(server_id):
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, # 将错误输出也合并到标准输出
-            cwd=os.path.join(os.getcwd(), "servers", str(server_id)),
+            cwd=os.path.join(os.getcwd(), SERVER_DIR, str(server_id)),
             bufsize=1,
             text=True,
             encoding='utf-8'

@@ -1,8 +1,10 @@
-from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify
+from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, send_file
 from datetime import datetime
 from functools import wraps
 import queue
 import os
+import io
+import zipfile
 
 # import definitions
 from definitions import load_config, load_announcements, start_server, stop_server, restart_server, output_queues, mc_process
@@ -10,6 +12,7 @@ from definitions import sqlite_ready, mysql_ready, login, add_user
 from definitions import check_admin, list_users, set_admin_status, reset_password, delete_user
 from definitions import get_server_limit, set_server_limit
 from definitions import get_user_servers, add_user_server, remove_user_server, check_server_owner
+from definitions import SERVER_DIR
 
 # 读取配置文件
 config = load_config()
@@ -219,7 +222,7 @@ def api_restart():
 
 def scan_servers():
     """扫描 servers/ 目录，返回服务器列表"""
-    servers_dir = 'servers'
+    servers_dir = SERVER_DIR
     if not os.path.isdir(servers_dir):
         return []
     result = []
@@ -287,7 +290,7 @@ def api_create_server():
     if new_id > max_servers:
         return jsonify({'status': 'error', 'msg': f'已达到最大服务器数量限制 ({max_servers})'}), 400
     # 创建目录
-    server_dir = os.path.join('servers', str(new_id))
+    server_dir = os.path.join(SERVER_DIR, str(new_id))
     try:
         os.makedirs(server_dir, exist_ok=True)
         # 复制默认 start.txt
@@ -311,7 +314,7 @@ def api_delete_server():
     if err: return err
     import shutil
 
-    server_dir = os.path.join('servers', str(server_id))
+    server_dir = os.path.join(SERVER_DIR, str(server_id))
     if not os.path.isdir(server_dir):
         return jsonify({'status': 'error', 'msg': f'服务器 #{server_id} 不存在'}), 404
 
@@ -475,7 +478,7 @@ def api_admin_set_limit():
 
 def safe_join(server_id, relative_path=''):
     """防止路径穿越攻击，确保路径在服务器目录内"""
-    base = os.path.realpath(os.path.join('servers', str(server_id)))
+    base = os.path.realpath(os.path.join(SERVER_DIR, str(server_id)))
     if not os.path.exists(base):
         os.makedirs(base)
     if relative_path:
@@ -530,7 +533,7 @@ def api_list_files():
         })
 
     # 计算相对路径（用于面包屑导航）
-    base = os.path.realpath(os.path.join('servers', str(server_id)))
+    base = os.path.realpath(os.path.join(SERVER_DIR, str(server_id)))
     rel_path = os.path.relpath(target_dir, base).replace('\\', '/')
     if rel_path == '.':
         rel_path = ''
@@ -616,7 +619,7 @@ def api_rename_file():
     full_new = os.path.join(parent_dir, new_name)
 
     # 安全检查
-    base = os.path.realpath(os.path.join('servers', str(server_id)))
+    base = os.path.realpath(os.path.join(SERVER_DIR, str(server_id)))
     if not full_new.startswith(base + os.sep) and full_new != base:
         return jsonify({'status': 'error', 'msg': '新路径无效'}), 400
 
@@ -706,7 +709,8 @@ def api_delete_file():
 
     try:
         if os.path.isdir(full_path):
-            os.rmdir(full_path)  # 只删除空目录
+            import shutil
+            shutil.rmtree(full_path)  # 递归删除文件夹及内容
         else:
             os.remove(full_path)
         return jsonify({'status': 'success', 'msg': f'已删除 {os.path.basename(full_path)}'})
@@ -736,27 +740,89 @@ def api_upload_file():
     if file.filename == '':
         return jsonify({'status': 'error', 'msg': '文件名为空'}), 400
 
-    # 防止路径穿越：只取文件名，丢弃路径部分
-    safe_name = os.path.basename(file.filename)
-    if not safe_name:
+    # 保留相对路径结构，防止路径穿越
+    safe_rel = file.filename.replace('\\', '/')
+    while safe_rel.startswith('./') or safe_rel.startswith('../') or safe_rel.startswith('/'):
+        safe_rel = safe_rel.lstrip('./').lstrip('/')
+    safe_rel = os.path.normpath(safe_rel)
+    if not safe_rel or safe_rel.startswith('..'):
         return jsonify({'status': 'error', 'msg': '文件名无效'}), 400
 
-    save_path = os.path.join(target_dir, safe_name)
+    save_path = os.path.join(target_dir, safe_rel)
+
+    # 自动创建子目录
+    save_dir = os.path.dirname(save_path)
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir, exist_ok=True)
 
     # 如果文件已存在，自动重命名（加数字后缀）
     if os.path.exists(save_path):
-        base, ext = os.path.splitext(safe_name)
+        base, ext = os.path.splitext(os.path.basename(safe_rel))
         counter = 1
-        while os.path.exists(os.path.join(target_dir, f"{base}_{counter}{ext}")):
+        parent_dir = os.path.dirname(save_path)
+        while os.path.exists(os.path.join(parent_dir, f"{base}_{counter}{ext}")):
             counter += 1
-        safe_name = f"{base}_{counter}{ext}"
-        save_path = os.path.join(target_dir, safe_name)
+        safe_rel = f"{base}_{counter}{ext}"
+        save_path = os.path.join(parent_dir, safe_rel)
 
     try:
         file.save(save_path)
-        return jsonify({'status': 'success', 'msg': f'文件 {safe_name} 已上传', 'name': safe_name})
+        return jsonify({'status': 'success', 'msg': f'文件 {os.path.basename(safe_rel)} 已上传', 'name': safe_rel})
     except Exception as e:
         return jsonify({'status': 'error', 'msg': f'上传失败: {str(e)}'}), 500
+
+
+# ==================== 文件下载 ====================
+
+@app.route('/api/files/download', methods=['GET'])
+@json_login_required
+def api_download_file():
+    """下载单个文件"""
+    server_id = request.args.get('server_id')
+    err = require_server_owner(int(server_id))
+    if err: return err
+    file_path = request.args.get('file', '')
+    full_path = safe_join(server_id, file_path)
+
+    if not full_path:
+        return jsonify({'status': 'error', 'msg': '路径无效'}), 400
+    if not os.path.isfile(full_path):
+        return jsonify({'status': 'error', 'msg': '文件不存在'}), 404
+
+    try:
+        return send_file(full_path, as_attachment=True, download_name=os.path.basename(full_path))
+    except Exception as e:
+        return jsonify({'status': 'error', 'msg': str(e)}), 500
+
+
+@app.route('/api/files/download_folder', methods=['GET'])
+@json_login_required
+def api_download_folder():
+    """打包下载文件夹（生成 ZIP）"""
+    server_id = request.args.get('server_id')
+    err = require_server_owner(int(server_id))
+    if err: return err
+    folder_path = request.args.get('folder', '')
+    full_path = safe_join(server_id, folder_path)
+
+    if not full_path:
+        return jsonify({'status': 'error', 'msg': '路径无效'}), 400
+    if not os.path.isdir(full_path):
+        return jsonify({'status': 'error', 'msg': '路径不是文件夹'}), 400
+
+    # 在内存中创建 ZIP
+    buf = io.BytesIO()
+    folder_name = os.path.basename(full_path) or f'server_{server_id}'
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for root, dirs, files in os.walk(full_path):
+            for file in files:
+                file_full = os.path.join(root, file)
+                # 计算相对路径（相对于打包的根目录）
+                rel_path = os.path.relpath(file_full, full_path)
+                zf.write(file_full, rel_path)
+
+    buf.seek(0)
+    return send_file(buf, as_attachment=True, download_name=f'{folder_name}.zip', mimetype='application/zip')
 
 
 def main():

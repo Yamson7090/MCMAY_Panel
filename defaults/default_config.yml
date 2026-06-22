@@ -6,6 +6,7 @@ server:
   secret_key: "secret_key" # Flask 会话加密密钥
   max_servers: 5 # 最大服务器数量，决定了 mc_process 和 output_queue 的大小
   max_online_servers: 3 # 最大在线服务器数量，超过后新服务器将进入排队状态
+  server_directory: "servers" # 服务器文件存储目录
 
 # 数据库配置
 database:

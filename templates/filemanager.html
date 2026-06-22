@@ -28,6 +28,7 @@
                 <button class="fm-tb-btn" onclick="showCreateModal('folder')">新建文件夹</button>
                 <button class="fm-tb-btn" onclick="document.getElementById('file-input').click()">上传文件</button>
                 <button class="fm-tb-btn" onclick="document.getElementById('folder-input').click()">上传文件夹</button>
+                <button class="fm-tb-btn fm-tb-download" id="btn-download-dir" onclick="downloadCurrentDir()">📦 打包下载</button>
                 <input type="file" id="file-input" multiple style="display:none">
                 <input type="file" id="folder-input" webkitdirectory multiple style="display:none">
             </div>
@@ -43,6 +44,7 @@
             <div class="fm-editor-header">
                 <span class="fm-editor-title" id="fm-editor-title">未选择文件</span>
                 <div class="fm-editor-actions">
+                    <button id="btn-download" class="fm-btn fm-btn-download" disabled>下载</button>
                     <button id="btn-save" class="fm-btn fm-btn-save" disabled>保存</button>
                     <button id="btn-rename" class="fm-btn fm-btn-rename" disabled>重命名</button>
                     <button id="btn-delete" class="fm-btn fm-btn-delete" disabled>删除</button>
@@ -162,7 +164,9 @@
                 html += '<div class="fm-file-item fm-folder" data-path="' + escapeAttr(subPath) + '">' +
                     '<span class="fm-icon">&#x1F4C1;</span>' +
                     '<span class="fm-name">' + escapeHtml(f.name) + '</span>' +
-                    '<span class="fm-size">文件夹</span></div>';
+                    '<span class="fm-size">文件夹</span>' +
+                    '<span class="fm-dl-btn" onclick="event.stopPropagation(); downloadFolder(\'' + escapeAttr(subPath) + '\', \'' + escapeAttr(f.name) + '\')" title="打包下载">&#x1F4E5;</span>' +
+                    '<span class="fm-del-btn" onclick="event.stopPropagation(); showListDeleteConfirm(\'' + escapeAttr(subPath) + '\', \'' + escapeAttr(f.name) + '\', true)" title="删除文件夹">&#x1F5D1;</span></div>';
             });
 
             fileList.forEach(function(f) {
@@ -170,7 +174,9 @@
                 html += '<div class="fm-file-item fm-file" data-path="' + escapeAttr(filePath) + '" data-name="' + escapeAttr(f.name) + '">' +
                     '<span class="fm-icon">' + getFileIcon(f.name) + '</span>' +
                     '<span class="fm-name">' + escapeHtml(f.name) + '</span>' +
-                    '<span class="fm-size">' + formatSize(f.size) + '</span></div>';
+                    '<span class="fm-size">' + formatSize(f.size) + '</span>' +
+                    '<span class="fm-dl-btn" onclick="event.stopPropagation(); downloadFile(\'' + escapeAttr(filePath) + '\', \'' + escapeAttr(f.name) + '\')" title="下载">&#x2B07;</span>' +
+                    '<span class="fm-del-btn" onclick="event.stopPropagation(); showListDeleteConfirm(\'' + escapeAttr(filePath) + '\', \'' + escapeAttr(f.name) + '\', false)" title="删除">&#x1F5D1;</span></div>';
             });
 
             if (dirs.length === 0 && fileList.length === 0) {
@@ -227,6 +233,7 @@
             ta.value = '加载中...';
             ta.disabled = true;
             document.getElementById('btn-save').disabled = true;
+            document.getElementById('btn-download').disabled = false;
             document.getElementById('btn-rename').disabled = false;
             document.getElementById('btn-delete').disabled = false;
             document.getElementById('fm-save-status').textContent = '';
@@ -344,27 +351,42 @@
             document.getElementById('delete-modal').style.display = 'flex';
         });
 
+        var listDeleteTarget = null;
+
+        function showListDeleteConfirm(path, name, isDir) {
+            listDeleteTarget = { path: path, name: name };
+            document.getElementById('delete-target-name').textContent = name + (isDir ? ' (文件夹及其所有内容)' : '');
+            document.getElementById('delete-modal').style.display = 'flex';
+        }
+
         function confirmDelete() {
+            var target = listDeleteTarget || currentFile;
+            if (!target) return;
             var btn = document.querySelector('#delete-modal button:last-child');
             btn.textContent = '...'; btn.disabled = true;
 
             fetch('/api/files/delete', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ server_id: SERVER_ID, file: currentFile.path })
+                body: JSON.stringify({ server_id: SERVER_ID, file: target.path })
             })
             .then(function(r) { return r.json(); })
             .then(function(data) {
                 btn.textContent = '确认删除'; btn.disabled = false;
                 if (data.status === 'success') {
                     closeModal('delete-modal');
-                    currentFile = null;
-                    document.getElementById('fm-editor-title').textContent = '未选择文件';
-                    document.getElementById('fm-textarea').style.display = 'none';
-                    document.getElementById('fm-placeholder').style.display = 'flex';
-                    document.getElementById('btn-save').disabled = true;
-                    document.getElementById('btn-rename').disabled = true;
-                    document.getElementById('btn-delete').disabled = true;
+                    if (target === currentFile) {
+                        // 从编辑器删除，清除编辑器界面
+                        currentFile = null;
+                        document.getElementById('fm-editor-title').textContent = '未选择文件';
+                        document.getElementById('fm-textarea').style.display = 'none';
+                        document.getElementById('fm-placeholder').style.display = 'flex';
+                        document.getElementById('btn-save').disabled = true;
+                        document.getElementById('btn-download').disabled = true;
+                        document.getElementById('btn-rename').disabled = true;
+                        document.getElementById('btn-delete').disabled = true;
+                    }
+                    listDeleteTarget = null;
                     loadFileList(currentDir);
                 } else { alert(data.msg); }
             });
@@ -376,6 +398,111 @@
 
         document.getElementById('file-input').addEventListener('change', function() { if (this.files.length > 0) { uploadFiles(this.files); this.value = ''; } });
         document.getElementById('folder-input').addEventListener('change', function() { if (this.files.length > 0) { uploadFiles(this.files); this.value = ''; } });
+
+        // ---- 下载功能（含进度条） ----
+
+        document.getElementById('btn-download').addEventListener('click', function() {
+            if (currentFile) downloadFile(currentFile.path, currentFile.name);
+        });
+
+        function showProgress(text, icon) {
+            document.getElementById('progress-text').textContent = text || '正在打包...';
+            if (icon) document.getElementById('progress-icon').textContent = icon;
+            document.getElementById('progress-bar').style.width = '0%';
+            document.getElementById('progress-bar').className = 'fm-progress-bar';
+            document.getElementById('progress-hint').style.display = 'block';
+            document.getElementById('download-progress-modal').style.display = 'flex';
+        }
+
+        function setProgress(pct, text) {
+            var bar = document.getElementById('progress-bar');
+            bar.style.width = pct + '%';
+            if (pct >= 100) bar.classList.add('complete');
+            if (text) document.getElementById('progress-text').textContent = text;
+        }
+
+        function hideProgress() {
+            document.getElementById('download-progress-modal').style.display = 'none';
+        }
+
+        function downloadFile(filePath, fileName) {
+            showProgress('正在下载...', '⬇️');
+            document.getElementById('progress-hint').style.display = 'none';
+            document.getElementById('progress-bar').style.width = '100%';
+            document.getElementById('progress-bar').classList.add('indeterminate');
+
+            var url = '/api/files/download?server_id=' + SERVER_ID + '&file=' + encodeURIComponent(filePath);
+            var a = document.createElement('a');
+            a.href = url;
+            a.download = fileName;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(hideProgress, 500);
+        }
+
+        function downloadFolder(folderPath, folderName) {
+            showProgress('正在打包文件夹...', '📦');
+
+            var url = '/api/files/download_folder?server_id=' + SERVER_ID + '&folder=' + encodeURIComponent(folderPath);
+
+            fetch(url)
+                .then(function(r) {
+                    if (!r.ok) throw new Error('下载失败 (' + r.status + ')');
+                    var total = parseInt(r.headers.get('Content-Length')) || 0;
+                    setProgress(10, '正在下载 ZIP...');
+                    document.getElementById('progress-icon').textContent = '⬇️';
+
+                    var reader = r.body.getReader();
+                    var received = 0;
+                    var chunks = [];
+
+                    function pump() {
+                        return reader.read().then(function(result) {
+                            if (result.done) {
+                                setProgress(100, '下载完成');
+                                return new Blob(chunks);
+                            }
+                            chunks.push(result.value);
+                            received += result.value.length;
+                            if (total > 0) {
+                                var pct = Math.min(90, Math.round((received / total) * 80) + 10);
+                                setProgress(pct);
+                            } else {
+                                setProgress(Math.min(80, 10 + (received / 1024 / 1024) * 5));
+                            }
+                            return pump();
+                        });
+                    }
+
+                    return pump();
+                })
+                .then(function(blob) {
+                    document.getElementById('progress-icon').textContent = '✅';
+                    setProgress(100, '下载完成，正在保存...');
+
+                    var link = document.createElement('a');
+                    link.href = URL.createObjectURL(blob);
+                    link.download = folderName + '.zip';
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    setTimeout(function() { URL.revokeObjectURL(link.href); }, 5000);
+
+                    setTimeout(hideProgress, 800);
+                })
+                .catch(function(err) {
+                    document.getElementById('progress-icon').textContent = '❌';
+                    document.getElementById('progress-text').textContent = '下载失败: ' + err.message;
+                    document.getElementById('progress-bar').classList.add('error');
+                    setTimeout(hideProgress, 2500);
+                });
+        }
+
+        function downloadCurrentDir() {
+            var dirName = currentDir ? currentDir.split('/').pop() : ('server_' + SERVER_ID);
+            downloadFolder(currentDir, dirName);
+        }
 
         function uploadFiles(fileList) {
             var area = document.getElementById('fm-upload-area');
@@ -396,9 +523,10 @@
             var items = [];
 
             files.forEach(function(f) {
+                var uploadPath = f.webkitRelativePath || f.name;
                 var div = document.createElement('div');
                 div.className = 'fm-upload-item';
-                div.innerHTML = '<span class="fm-upload-icon">-</span><span class="fm-upload-name">' + escapeHtml(f.name) + '</span><span class="fm-upload-status">等待中</span>';
+                div.innerHTML = '<span class="fm-upload-icon">-</span><span class="fm-upload-name">' + escapeHtml(uploadPath) + '</span><span class="fm-upload-status">等待中</span>';
                 list.appendChild(div);
                 items.push(div);
             });
@@ -413,11 +541,14 @@
                 }
                 var file = files[index];
                 var item = items[index];
+                var uploadPath = file.webkitRelativePath || file.name;
+                var displayName = uploadPath;
                 var fd = new FormData();
                 fd.append('server_id', SERVER_ID);
                 fd.append('dir', currentDir);
-                fd.append('file', file, file.name);
+                fd.append('file', file, uploadPath);
 
+                item.querySelector('.fm-upload-name').textContent = displayName;
                 item.querySelector('.fm-upload-icon').textContent = '...';
                 item.querySelector('.fm-upload-status').textContent = '上传中';
 
@@ -459,6 +590,23 @@
 
         loadFileList('');
     </script>
+
+    <!-- 打包下载进度弹窗 -->
+    <div class="fm-modal-overlay" id="download-progress-modal" style="display:none;">
+        <div class="fm-modal fm-progress-modal">
+            <div class="fm-modal-header">
+                <span>打包下载</span>
+            </div>
+            <div class="fm-modal-body fm-progress-body">
+                <div class="fm-progress-icon" id="progress-icon">📦</div>
+                <p class="fm-progress-text" id="progress-text">正在打包文件...</p>
+                <div class="fm-progress-track">
+                    <div class="fm-progress-bar" id="progress-bar"></div>
+                </div>
+                <p class="fm-progress-hint" id="progress-hint">根据文件夹大小可能需要几秒到几分钟</p>
+            </div>
+        </div>
+    </div>
 
 </body>
 </html>
