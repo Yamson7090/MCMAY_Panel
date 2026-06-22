@@ -1,2 +1,3 @@
+-Xmx1024M
 server.jar
 nogui
