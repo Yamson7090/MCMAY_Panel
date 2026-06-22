@@ -5,17 +5,23 @@ server:
   debug: false
   secret_key: "secret_key" # Flask 会话加密密钥
   max_servers: 5 # 最大服务器数量，决定了 mc_process 和 output_queue 的大小
-  max_online_servers: 3 # 最大在线服务器数量，超过后新服务器将进入排队状态
+  max_online_servers: 3 # 最大在线服务器数量
   server_directory: "servers" # 服务器文件存储目录
 
 # 数据库配置
 database:
   type: "sqlite"  # 可选项：mysql、sqlite
   sqlite:
-    db_path: "users.db"  # SQLite 数据库文件路径
+    users_db: "users.db"  # 用户数据库文件路径
+    servers_db: "servers.db"  # 服务器信息数据库文件路径
   mysql:
     host: "127.0.0.1"
     port: 3306
     user: "user"          # 你的 MySQL 用户名
     password: "password"  # 你的 MySQL 密码
     name: "may_platform"  # 你的数据库名
+
+#velocity配置
+velocity:
+  enable: false
+  port: 25565

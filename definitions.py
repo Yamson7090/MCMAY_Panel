@@ -190,7 +190,8 @@ def restart_server(server_id):
 # 统一接口，根据配置自动切换 SQLite / MySQL
 
 db_type = config['database']['type']
-db_path = config['database']['sqlite']['db_path'] if db_type == 'sqlite' else None
+db_path = config['database']['sqlite']['users_db'] if db_type == 'sqlite' else None
+servers_db_path = config['database']['sqlite']['servers_db'] if db_type == 'sqlite' else None
 
 def _hash_password(password):
     return generate_password_hash(password)
@@ -221,6 +222,30 @@ def sqlite_ready(db_name=None):
     conn.commit()
     cursor.close()
     conn.close()
+
+    # 初始化 servers 数据库
+    _init_servers_db_sqlite()
+
+
+def _init_servers_db_sqlite():
+    """创建/初始化服务器信息数据库 (servers.db)"""
+    conn = sqlite3.connect(servers_db_path)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS servers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            server_id INTEGER UNIQUE NOT NULL,
+            server_name TEXT DEFAULT '',
+            server_path TEXT DEFAULT '',
+            max_memory INTEGER DEFAULT 0,
+            min_memory INTEGER DEFAULT 0,
+            server_core TEXT DEFAULT ''
+        )
+    ''')
+    conn.commit()
+    cursor.close()
+    conn.close()
+
 
 def _add_user_sqlite(db_name, username, password, if_admin=0):
     password_hash = _hash_password(password)
@@ -277,6 +302,20 @@ def mysql_ready():
     cursor.execute("SELECT id FROM users WHERE username = %s", ('admin',))
     if not cursor.fetchone():
         _add_user_mysql('admin', '123456', if_admin=1)
+
+    # 创建 servers 表
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS servers (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            server_id INT UNIQUE NOT NULL,
+            server_name VARCHAR(255) DEFAULT '',
+            server_path TEXT DEFAULT '',
+            max_memory INT DEFAULT 0,
+            min_memory INT DEFAULT 0,
+            server_core VARCHAR(255) DEFAULT ''
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    ''')
+
     cursor.close()
     conn.close()
 
