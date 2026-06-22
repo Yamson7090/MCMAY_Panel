@@ -24,4 +24,3 @@ database:
 #velocity配置
 velocity:
   enable: false
-  port: 25565
