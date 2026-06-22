@@ -2,7 +2,7 @@
 
 **一个基于 Python Flask 开发的轻量级 Minecraft 服务器控制面板，旨在为朋友或小型社区提供便捷的开服与管理体验。**
 
-> **核心特性**：实时控制台交互 | 多服管理 | SQLite/MySQL 支持
+> **核心特性**：实时控制台交互 | 多服管理 | Velocity 代理 | SQLite/MySQL 支持
 
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python->=3.10-green.svg)](https://www.python.org/)
@@ -15,8 +15,9 @@ MCMAY_Panel 是一个非盈利性质的 Minecraft 共享开服平台后端系统
 
 ### 🌟 核心功能
 *   **用户系统**：支持注册、登录（密码哈希存储）、注销。
-*   **实时控制台**：支持发送 OP 指令（如 `/op`, `/gamemode`），实时轮询显示服务端日志（含颜色分类）。
+*   **实时控制台**：支持发送指令（如 `/op`, `/gamemode`），实时轮询显示服务端日志（含颜色分类）。
 *   **服务器管理**：支持多开服务器实例管理，显示服务器状态（运行/停止）、玩家数、端口等信息。
+*   **Velocity 代理**：内置 Velocity 支持，自动下载、配置与热重载，实现多服统一接入。
 *   **数据持久化**：支持 SQLite（默认）和 MySQL 两种数据库存储方案。
 
 ---
@@ -81,7 +82,38 @@ uv run main.py
 
 ### 服务器配置
 *   `max_servers`：允许系统管理的最大服务器数量。
+*   `max_online_servers`：最大同时在线服务器数量。
 *   `secret_key`：Flask 会话加密密钥，建议部署时修改。
+
+---
+
+## 🌐 Velocity 代理模式
+
+MCMAY_Panel 内置了对 [Velocity](https://papermc.io/software/velocity) 代理的支持，可实现多台后端服务器统一接入、无缝切换。
+
+### 启用方式
+在 `config.yml` 中设置：
+```yaml
+velocity:
+  enable: true
+  port: 25565  # Velocity 监听端口
+```
+
+### 工作原理
+1. **自动初始化**：启用后，系统自动保留 **ID=0** 的服务器槽位作为 Velocity 代理。
+2. **自动下载**：首次启动时自动从 PaperMC API 下载最新版 `velocity.jar`。
+3. **自动配置**：生成 `velocity.toml`、`forwarding.secret` 和 `start.txt`，开箱即用。
+4. **后端同步**：新创建的支持 Velocity 的后端服务器（Paper、Folia、Leaves）会自动注册到 Velocity 配置中。
+5. **热重载**：添加或修改后端服务器后，系统自动向 Velocity 发送 `velocity reload` 指令，无需手动重启。
+
+### 支持的服务端核心
+| 核心 | 说明 |
+|------|------|
+| **Paper** | 高性能 Bukkit/Spigot 分支 |
+| **Folia** | Paper 的分区多线程分支 |
+| **Leaves** | 轻量化 Paper 分支 |
+
+> **注意**：启用 Velocity 后，玩家通过 Velocity 代理地址（`端口:25565`）连接，而非直接连接后端服务器。各后端服务器需配置 `velocity.toml` 中 `player-info-forwarding-mode` 为对应模式，并确保 `forwarding.secret` 一致。
 
 ---
 
@@ -102,7 +134,8 @@ MCMAY_Panel/
 │   ├── console.html        # 远程控制台
 │   └── filemanager.html    # 文件管理
 ├── static/                 # 静态资源 (CSS/JS/图标)
-├── servers/                # 服务端文件存储目录 (运行时自动生成)
+├── servers/                # 服务端文件存储目录
+│   └── 0/                  # Velocity 代理目录（启用 velocity 后自动生成）
 ├── defaults/               # 默认配置文件模板
 ├── start.cmd               # Windows 启动脚本
 ├── start.sh                # Linux/macOS 启动脚本
@@ -136,8 +169,11 @@ MCMAY_Panel/
 **Q：如何添加新的服务端核心？**
 > A：在 `servers/{id}/` 目录下创建 `start.txt` 文件，写入启动命令（如 `['java', '-jar', 'server.jar', 'nogui']`），系统会自动读取该文件启动。
 
-**Q：项目目录名可以改成 MCMAY_Panel 吗？**
-> A：可以。重命名文件夹后，确保启动脚本中的路径正确即可，项目本身不依赖文件夹名称。
+**Q：Velocity 代理连接失败怎么办？**
+> A：请检查 `config.yml` 中 `velocity.enable` 是否为 `true`；确认 `servers/0/velocity.toml` 中的 `player-info-forwarding-mode` 与后端服务器配置一致；确保 `forwarding.secret` 文件内容在所有后端服务器间保持一致。
+
+**Q：如何禁用 Velocity 模式？**
+> A：将 `config.yml` 中 `velocity.enable` 设为 `false` 并重启面板即可。ID=0 的 Velocity 服务器将不再自动管理。
 
 ---
 
