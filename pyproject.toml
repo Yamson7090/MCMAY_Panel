@@ -1,7 +1,7 @@
 [project]
-name = "hivemc"
+name = "mcmay_panel"
 version = "0.1.0"
-description = "Add your description here"
+description = "Minecraft 服务器管理面板"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
