@@ -54,12 +54,13 @@ def read_start_config(filepath):
         第二行: JAR 文件名 (必需，如 server.jar)
         第三行: nogui (可选，留空则不添加)
     返回: (jar_name, java_args, nogui) 元组，失败返回 None
-    """
+    
     文件格式（三行）：
         第一行: Java 参数 (可选，如 -Xmx1024M)
         第二行: JAR 文件名 (必需)
         第三行: nogui (可选，留空则不添加)
     """
+
     try:
         with open(filepath, 'r', encoding='utf-8') as file:
             lines = file.readlines()
