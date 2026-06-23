@@ -25,6 +25,8 @@ def load_config():
 
 config = load_config()
 SERVER_DIR = config['server']['server_directory']
+# 防止重复初始化 Velocity（避免重复下载与重复同步输出）
+_VELOCITY_INIT_DONE = False
 
 def read_start_config(filepath):
     """读取启动配置文件，返回 (jar_name, java_args, nogui) 元组。
@@ -692,6 +694,10 @@ def is_velocity_core(server_core):
 
 def init_velocity_server():
     """初始化 Velocity 服务器（ID=0）的目录结构和数据库记录"""
+    global _VELOCITY_INIT_DONE
+    if _VELOCITY_INIT_DONE:
+        return
+    _VELOCITY_INIT_DONE = True
     velocity_dir = os.path.join(SERVER_DIR, '0')
     os.makedirs(velocity_dir, exist_ok=True)
 
@@ -715,7 +721,7 @@ def download_velocity_jar(target_dir):
     """从 PaperMC API (v3) 自动下载最新版 Velocity JAR"""
     jar_path = os.path.join(target_dir, 'velocity.jar')
     if os.path.exists(jar_path):
-        print("✅ velocity.jar 已存在，跳过下载")
+        print("velocity.jar 已存在，跳过下载")
         return True
 
     try:
@@ -745,7 +751,7 @@ def download_velocity_jar(target_dir):
         print(f"   → 文件: {download_name}")
 
         # 3. 下载到临时文件
-        print(f"📥 正在下载 {download_name} ...")
+        print(f"正在下载 {download_name} ...")
         req = urllib.request.Request(download_url, headers={'User-Agent': 'HiveMC/1.0'})
         resp = urllib.request.urlopen(req, timeout=120)
 
@@ -767,7 +773,7 @@ def download_velocity_jar(target_dir):
 
         # 4. 重命名为 velocity.jar
         os.replace(tmp_path, jar_path)
-        print(f"\n✅ velocity.jar 下载完成！({received//1024//1024}MB)")
+        print(f"\nvelocity.jar 下载完成！({received//1024//1024}MB)")
         return True
 
     except urllib.error.HTTPError as e:
@@ -871,6 +877,8 @@ def delete_server_info(server_id):
             conn.commit()
             cursor.close()
             conn.close()
+        if config.get('velocity', {}).get('enable', False):
+            sync_velocity_toml_servers()
         return True
     except Exception:
         return False
@@ -915,13 +923,13 @@ def ensure_server_properties(server_id):
         # 旧服务器在 DB 中没有记录，自动创建
         port = 30000 + server_id
         save_server_info(server_id, server_port=port)
-        print(f"✅ 已为服务器 #{server_id} 创建数据库记录，端口 {port}")
+        print(f"已为服务器 #{server_id} 创建数据库记录，端口 {port}")
     else:
         port = info.get('server_port')
         if not port:
             port = 30000 + server_id
             save_server_info(server_id, server_port=port)
-            print(f"✅ 已为服务器 #{server_id} 分配端口 {port}")
+            print(f"已为服务器 #{server_id} 分配端口 {port}")
     port = str(port)
 
     server_dir = os.path.join(os.getcwd(), SERVER_DIR, str(server_id))
@@ -933,7 +941,7 @@ def ensure_server_properties(server_id):
             f.write(f"server-port={port}\n")
             f.write("online-mode=false\n")
             f.write("motd=A HiveMC Server\n")
-        print(f"✅ 已为服务器 #{server_id} 创建 server.properties，端口 {port}")
+        print(f"已为服务器 #{server_id} 创建 server.properties，端口 {port}")
         return
 
     with open(props_path, 'r', encoding='utf-8') as f:
@@ -1012,7 +1020,7 @@ def auto_configure_velocity_props(server_id):
         with open(props_path, 'w', encoding='utf-8') as f:
             for key, val in props.items():
                 f.write(f"{key}={val}\n")
-        print(f"✅ 已为服务器 #{server_id} 配置 server.properties")
+        print(f"已为服务器 #{server_id} 配置 server.properties")
 
 
 def _post_start_velocity_config(server_id):
@@ -1096,24 +1104,40 @@ def sync_velocity_toml_servers():
     with open(toml_path, 'r', encoding='utf-8') as f:
         content = f.read()
 
-    # 去掉所有现有 [servers] 段（含内容）和 try = [...] 块
+    # 去掉所有现有 [servers] 段（含内容）；尽量保留原有 try = [...] 块，除非配置要求重建它
     import re
+    # 先尝试提取现有的 try 块以便在需要时恢复（避免被后续对 [servers] 的删除吞掉）
+    preserved_try = None
+    try_match = re.search(r'\n?try\s*=\s*\[.*?\]', content, flags=re.DOTALL)
+    if try_match:
+        preserved_try = try_match.group(0)
+
     # 移除所有 [servers] 段（从 [servers] 到下一个 [ 或文件结尾）
     content = re.sub(r'\n?\[servers\].*?(?=\n\[|$)', '', content, flags=re.DOTALL)
-    # 移除所有 try = [...] 块（多行）
-    content = re.sub(r'\n?try\s*=\s*\[.*?\]', '', content, flags=re.DOTALL)
+
+    # 如果配置允许自动设置 try，则移除所有原有 try 块（将用新生成的 try 替换）
+    if config.get('velocity', {}).get('auto_setup_server_try', True):
+        content = re.sub(r'\n?try\s*=\s*\[.*?\]', '', content, flags=re.DOTALL)
 
     # 生成新的 [servers] 段
     servers_block = '\n[servers]\n'
     for sname, port in server_names:
         servers_block += f'{sname} = "127.0.0.1:{port}"\n'
 
-    try_block = 'try = [\n'
-    for sname, _ in server_names:
-        try_block += f'    "{sname}",\n'
-    try_block += ']\n'
-
-    new_section = servers_block + '\n' + try_block
+    new_section = servers_block
+    if config.get('velocity', {}).get('auto_setup_server_try', True):
+        try_block = 'try = [\n'
+        for sname, _ in server_names:
+            try_block += f'    "{sname}",\n'
+        try_block += ']\n'
+        new_section += '\n' + try_block
+    else:
+        # 如果用户选择不自动重建 try，则恢复保留的 try 块（若存在）
+        if preserved_try:
+            if not preserved_try.startswith('\n'):
+                new_section += '\n' + preserved_try
+            else:
+                new_section += preserved_try
 
     # 插入到 [forced-hosts] 前，如果没有则追加到末尾
     insert_pos = content.find('\n[forced-hosts]')

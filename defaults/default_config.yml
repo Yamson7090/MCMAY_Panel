@@ -24,3 +24,4 @@ database:
 #velocity配置
 velocity:
   enable: false
+  auto_setup_server_try: true # 是否自动设置 velocity.toml 文件中的 servers.try 字段

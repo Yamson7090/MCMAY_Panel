@@ -379,6 +379,12 @@ def api_delete_server():
         delete_server_info(server_id)
         if config.get('velocity', {}).get('enable', False):
             sync_velocity_toml_servers()
+            if 0 < len(mc_process) and mc_process[0] and mc_process[0].poll() is None:
+                try:
+                    mc_process[0].stdin.write("velocity reload\n")
+                    mc_process[0].stdin.flush()
+                except Exception:
+                    pass
         return jsonify({'status': 'success', 'msg': f'服务器 #{server_id} 已删除（不可恢复）'})
     except Exception as e:
         return jsonify({'status': 'error', 'msg': f'删除失败: {str(e)}'}), 500
